@@ -1,164 +1,141 @@
+from collections import namedtuple
+
 import pytest
 from async_substrate_interface.errors import SubstrateRequestException
 
-from bittensor import logging
-from tests.e2e_tests.utils.chain_interactions import sudo_set_admin_utils
-from tests.e2e_tests.utils.e2e_test_utils import (
-    wait_to_start_call,
-    async_wait_to_start_call,
+from tests.e2e_tests.utils import (
+    TestSubnet,
+    ACTIVATE_SUBNET,
+    REGISTER_SUBNET,
+    REGISTER_NEURON,
 )
 
-logging.set_trace()
+SET_MAX_SPACE = namedtuple("SET_MAX_SPACE", ["wallet", "pallet", "sudo", "new_limit"])
+COMMITMENT_MESSAGE = "Hello World!"
 
 
-def test_commitment(local_chain, subtensor, alice_wallet, dave_wallet):
-    dave_subnet_netuid = 2
-    assert subtensor.register_subnet(dave_wallet, True, True)
-    assert subtensor.subnet_exists(dave_subnet_netuid), (
-        "Subnet wasn't created successfully"
-    )
-
-    assert wait_to_start_call(subtensor, dave_wallet, dave_subnet_netuid)
+def test_commitment(subtensor, alice_wallet, dave_wallet):
+    """Tests commitment extrinsic."""
+    # Create and prepare subnet
+    dave_sn = TestSubnet(subtensor)
+    steps = [
+        REGISTER_SUBNET(dave_wallet),
+        ACTIVATE_SUBNET(dave_wallet),
+    ]
+    dave_sn.execute_steps(steps)
 
     with pytest.raises(SubstrateRequestException, match="AccountNotAllowedCommit"):
-        subtensor.set_commitment(
-            alice_wallet,
-            netuid=dave_subnet_netuid,
-            data="Hello World!",
+        subtensor.commitments.set_commitment(
+            wallet=alice_wallet,
+            netuid=dave_sn.netuid,
+            data=COMMITMENT_MESSAGE,
+            raise_error=True,
         )
 
-    assert subtensor.burned_register(
-        alice_wallet,
-        netuid=dave_subnet_netuid,
-    )
+    dave_sn.execute_steps([REGISTER_NEURON(alice_wallet)])
 
-    uid = subtensor.get_uid_for_hotkey_on_subnet(
-        alice_wallet.hotkey.ss58_address,
-        netuid=dave_subnet_netuid,
+    uid = subtensor.subnets.get_uid_for_hotkey_on_subnet(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
     )
-
     assert uid is not None
-
-    assert "" == subtensor.get_commitment(
-        netuid=dave_subnet_netuid,
+    assert "" == subtensor.commitments.get_commitment(
+        netuid=dave_sn.netuid,
         uid=uid,
     )
 
-    assert subtensor.set_commitment(
-        alice_wallet,
-        netuid=dave_subnet_netuid,
-        data="Hello World!",
+    assert subtensor.commitments.set_commitment(
+        wallet=alice_wallet,
+        netuid=dave_sn.netuid,
+        data=COMMITMENT_MESSAGE,
     )
 
-    status, error = sudo_set_admin_utils(
-        local_chain,
-        alice_wallet,
-        call_module="Commitments",
-        call_function="set_max_space",
-        call_params={
-            "netuid": dave_subnet_netuid,
-            "new_limit": len("Hello World!"),
-        },
+    response = dave_sn.execute_one(
+        SET_MAX_SPACE(alice_wallet, "Commitments", True, len(COMMITMENT_MESSAGE))
     )
-
-    assert status is True, error
+    assert response.success, response.message
 
     with pytest.raises(
         SubstrateRequestException,
         match="SpaceLimitExceeded",
     ):
-        subtensor.set_commitment(
-            alice_wallet,
-            netuid=dave_subnet_netuid,
-            data="Hello World!1",
+        subtensor.commitments.set_commitment(
+            wallet=alice_wallet,
+            netuid=dave_sn.netuid,
+            data=COMMITMENT_MESSAGE + "longer",
+            raise_error=True,
         )
 
-    assert "Hello World!" == subtensor.get_commitment(
-        netuid=dave_subnet_netuid,
+    assert COMMITMENT_MESSAGE == subtensor.commitments.get_commitment(
+        netuid=dave_sn.netuid,
         uid=uid,
     )
 
     assert (
-        subtensor.get_all_commitments(netuid=dave_subnet_netuid)[
+        subtensor.commitments.get_all_commitments(netuid=dave_sn.netuid)[
             alice_wallet.hotkey.ss58_address
         ]
-        == "Hello World!"
+        == COMMITMENT_MESSAGE
     )
 
 
 @pytest.mark.asyncio
-async def test_commitment_async(
-    local_chain, async_subtensor, alice_wallet, dave_wallet
-):
-    dave_subnet_netuid = 2
-    assert await async_subtensor.register_subnet(dave_wallet)
-    assert await async_subtensor.subnet_exists(dave_subnet_netuid), (
-        "Subnet wasn't created successfully"
+async def test_commitment_async(async_subtensor, alice_wallet, dave_wallet):
+    # Create and prepare subnet
+    dave_sn = TestSubnet(async_subtensor)
+    steps = [
+        REGISTER_SUBNET(dave_wallet),
+        ACTIVATE_SUBNET(dave_wallet),
+    ]
+    await dave_sn.async_execute_steps(steps)
+
+    with pytest.raises(SubstrateRequestException, match="AccountNotAllowedCommit"):
+        await async_subtensor.commitments.set_commitment(
+            wallet=alice_wallet,
+            netuid=dave_sn.netuid,
+            data=COMMITMENT_MESSAGE,
+            raise_error=True,
+        )
+
+    await dave_sn.async_execute_steps([REGISTER_NEURON(alice_wallet)])
+
+    uid = await async_subtensor.subnets.get_uid_for_hotkey_on_subnet(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
+    )
+    assert uid is not None
+    assert "" == await async_subtensor.commitments.get_commitment(
+        netuid=dave_sn.netuid,
+        uid=uid,
     )
 
-    assert await async_wait_to_start_call(
-        async_subtensor, dave_wallet, dave_subnet_netuid
+    assert await async_subtensor.commitments.set_commitment(
+        wallet=alice_wallet,
+        netuid=dave_sn.netuid,
+        data=COMMITMENT_MESSAGE,
     )
 
-    async with async_subtensor as sub:
-        with pytest.raises(SubstrateRequestException, match="AccountNotAllowedCommit"):
-            await sub.set_commitment(
-                alice_wallet,
-                netuid=dave_subnet_netuid,
-                data="Hello World!",
-            )
+    response = await dave_sn.async_execute_one(
+        SET_MAX_SPACE(alice_wallet, "Commitments", True, len(COMMITMENT_MESSAGE))
+    )
+    assert response.success, response.message
 
-        assert await sub.burned_register(
-            alice_wallet,
-            netuid=dave_subnet_netuid,
+    with pytest.raises(
+        SubstrateRequestException,
+        match="SpaceLimitExceeded",
+    ):
+        await async_subtensor.commitments.set_commitment(
+            wallet=alice_wallet,
+            netuid=dave_sn.netuid,
+            data=COMMITMENT_MESSAGE + "longer",
+            raise_error=True,
         )
 
-        uid = await sub.get_uid_for_hotkey_on_subnet(
-            alice_wallet.hotkey.ss58_address,
-            netuid=dave_subnet_netuid,
-        )
+    assert COMMITMENT_MESSAGE == await async_subtensor.commitments.get_commitment(
+        netuid=dave_sn.netuid,
+        uid=uid,
+    )
 
-        assert uid is not None
-
-        assert "" == await sub.get_commitment(
-            netuid=dave_subnet_netuid,
-            uid=uid,
-        )
-
-        assert await sub.set_commitment(
-            alice_wallet,
-            netuid=dave_subnet_netuid,
-            data="Hello World!",
-        )
-
-        status, error = sudo_set_admin_utils(
-            local_chain,
-            alice_wallet,
-            call_module="Commitments",
-            call_function="set_max_space",
-            call_params={
-                "netuid": dave_subnet_netuid,
-                "new_limit": len("Hello World!"),
-            },
-        )
-
-        assert status is True, error
-
-        with pytest.raises(
-            SubstrateRequestException,
-            match="SpaceLimitExceeded",
-        ):
-            await sub.set_commitment(
-                alice_wallet,
-                netuid=dave_subnet_netuid,
-                data="Hello World!1",
-            )
-
-        assert "Hello World!" == await sub.get_commitment(
-            netuid=dave_subnet_netuid,
-            uid=uid,
-        )
-
-        assert (await sub.get_all_commitments(netuid=dave_subnet_netuid))[
-            alice_wallet.hotkey.ss58_address
-        ] == "Hello World!"
+    assert (
+        await async_subtensor.commitments.get_all_commitments(netuid=dave_sn.netuid)
+    )[alice_wallet.hotkey.ss58_address] == COMMITMENT_MESSAGE

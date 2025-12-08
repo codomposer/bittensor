@@ -1,15 +1,16 @@
-from bittensor.core.subtensor import Subtensor
-from bittensor.core.subtensor_api import SubtensorApi
 import pytest
+
+from bittensor.extras import SubtensorApi
+from bittensor.core.subtensor import Subtensor
 
 
 def test_properties_methods_comparable(other_class: "Subtensor" = None):
     """Verifies that methods in SubtensorApi and its properties contains all Subtensors methods."""
     # Preps
     subtensor = (
-        other_class(network="latent-lite", _mock=True)
+        other_class(network="latent-lite", mock=True)
         if other_class
-        else Subtensor(network="latent-lite", _mock=True)
+        else Subtensor(network="latent-lite", mock=True)
     )
     subtensor_api = SubtensorApi(network="latent-lite", mock=True)
 
@@ -19,6 +20,9 @@ def test_properties_methods_comparable(other_class: "Subtensor" = None):
 
     subtensor_api_methods = [m for m in dir(subtensor_api) if not m.startswith("_")]
     chain_methods = [m for m in dir(subtensor_api.chain) if not m.startswith("_")]
+    crowdloans_methods = [
+        m for m in dir(subtensor_api.crowdloans) if not m.startswith("_")
+    ]
     commitments_methods = [
         m for m in dir(subtensor_api.commitments) if not m.startswith("_")
     ]
@@ -32,23 +36,30 @@ def test_properties_methods_comparable(other_class: "Subtensor" = None):
         m for m in dir(subtensor_api.metagraphs) if not m.startswith("_")
     ]
     neurons_methods = [m for m in dir(subtensor_api.neurons) if not m.startswith("_")]
+    proxies_methods = [m for m in dir(subtensor_api.proxies) if not m.startswith("_")]
     queries_methods = [m for m in dir(subtensor_api.queries) if not m.startswith("_")]
     stakes_methods = [m for m in dir(subtensor_api.staking) if not m.startswith("_")]
     subnets_methods = [m for m in dir(subtensor_api.subnets) if not m.startswith("_")]
     wallets_methods = [m for m in dir(subtensor_api.wallets) if not m.startswith("_")]
+    mev_shield_methods = [
+        m for m in dir(subtensor_api.mev_shield) if not m.startswith("_")
+    ]
 
     all_subtensor_api_methods = (
         subtensor_api_methods
         + chain_methods
         + commitments_methods
+        + crowdloans_methods
         + delegates_methods
         + extrinsics_methods
         + metagraphs_methods
         + neurons_methods
+        + proxies_methods
         + queries_methods
         + stakes_methods
         + subnets_methods
         + wallets_methods
+        + mev_shield_methods
     )
 
     # Assertions
@@ -69,7 +80,7 @@ def test__methods_comparable_with_passed_legacy_methods(
     subtensor = (
         other_class(network="latent-lite", mock=True)
         if other_class
-        else Subtensor(network="latent-lite", _mock=True)
+        else Subtensor(network="latent-lite", mock=True)
     )
     subtensor_api = SubtensorApi(network="latent-lite", mock=True, legacy_methods=True)
 

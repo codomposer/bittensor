@@ -1,8 +1,8 @@
 import pytest
 
-from bittensor.core.errors import SubstrateRequestException
+from bittensor.core.chain_data import RootClaimType
 from bittensor.core.extrinsics.asyncex import root as async_root
-
+from bittensor.core.types import ExtrinsicResponse
 from bittensor.utils.balance import Balance
 
 
@@ -44,20 +44,20 @@ async def test_root_register_extrinsic_success(subtensor, fake_wallet, mocker):
     fake_uid = 123
 
     mocked_unlock_key = mocker.patch.object(
-        async_root,
-        "unlock_key",
-        return_value=mocker.Mock(success=True, message="Unlocked"),
+        async_root.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=True, message="Unlocked"),
     )
     mocked_is_hotkey_registered = mocker.patch.object(
         subtensor,
         "is_hotkey_registered",
         return_value=False,
     )
-    mocked_compose_call = mocker.patch.object(subtensor.substrate, "compose_call")
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
     mocked_sign_and_send_extrinsic = mocker.patch.object(
         subtensor,
         "sign_and_send_extrinsic",
-        return_value=(True, ""),
+        return_value=ExtrinsicResponse(True, "Success"),
     )
     mocked_query = mocker.patch.object(
         subtensor.substrate,
@@ -84,7 +84,7 @@ async def test_root_register_extrinsic_success(subtensor, fake_wallet, mocker):
     )
 
     # Asserts
-    mocked_unlock_key.assert_called_once_with(fake_wallet)
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False, unlock_type="both")
     mocked_is_hotkey_registered.assert_called_once_with(
         netuid=0, hotkey_ss58="fake_hotkey_address"
     )
@@ -94,8 +94,11 @@ async def test_root_register_extrinsic_success(subtensor, fake_wallet, mocker):
         module="SubtensorModule",
         storage_function="Uids",
         params=[0, "fake_hotkey_address"],
+        block_hash=None,
+        reuse_block_hash=False,
     )
-    assert result is True
+    assert result.success is True
+    assert result.message == "Success"
 
 
 @pytest.mark.asyncio
@@ -104,6 +107,11 @@ async def test_root_register_extrinsic_insufficient_balance(
     fake_wallet,
     mocker,
 ):
+    mocked_unlock_key = mocker.patch.object(
+        async_root.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=True, message="Unlocked"),
+    )
     mocker.patch.object(
         subtensor,
         "get_hyperparameter",
@@ -122,7 +130,8 @@ async def test_root_register_extrinsic_insufficient_balance(
         wait_for_finalization=True,
     )
 
-    assert result is False
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False, unlock_type="both")
+    assert result.success is False
 
     subtensor.get_balance.assert_called_once_with(
         fake_wallet.coldkeypub.ss58_address,
@@ -146,9 +155,9 @@ async def test_root_register_extrinsic_unlock_failed(subtensor, fake_wallet, moc
         return_value=Balance(1),
     )
     mocked_unlock_key = mocker.patch.object(
-        async_root,
-        "unlock_key",
-        return_value=mocker.Mock(success=False, message="Unlock failed"),
+        async_root.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=False, message="Unlocked"),
     )
 
     # Call
@@ -160,8 +169,8 @@ async def test_root_register_extrinsic_unlock_failed(subtensor, fake_wallet, moc
     )
 
     # Asserts
-    mocked_unlock_key.assert_called_once_with(fake_wallet)
-    assert result is False
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False, unlock_type="both")
+    assert result.success is False
 
 
 @pytest.mark.asyncio
@@ -183,9 +192,9 @@ async def test_root_register_extrinsic_already_registered(
         return_value=Balance(1),
     )
     mocked_unlock_key = mocker.patch.object(
-        async_root,
-        "unlock_key",
-        return_value=mocker.Mock(success=True, message="Unlocked"),
+        async_root.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=True, message="Unlocked"),
     )
     mocked_is_hotkey_registered = mocker.patch.object(
         subtensor,
@@ -202,11 +211,11 @@ async def test_root_register_extrinsic_already_registered(
     )
 
     # Asserts
-    mocked_unlock_key.assert_called_once_with(fake_wallet)
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False, unlock_type="both")
     mocked_is_hotkey_registered.assert_called_once_with(
         netuid=0, hotkey_ss58="fake_hotkey_address"
     )
-    assert result is True
+    assert result.success is True
 
 
 @pytest.mark.asyncio
@@ -228,20 +237,20 @@ async def test_root_register_extrinsic_transaction_failed(
         return_value=Balance(1),
     )
     mocked_unlock_key = mocker.patch.object(
-        async_root,
-        "unlock_key",
-        return_value=mocker.Mock(success=True, message="Unlocked"),
+        async_root.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=True, message="Unlocked"),
     )
     mocked_is_hotkey_registered = mocker.patch.object(
         subtensor,
         "is_hotkey_registered",
         return_value=False,
     )
-    mocked_compose_call = mocker.patch.object(subtensor.substrate, "compose_call")
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
     mocked_sign_and_send_extrinsic = mocker.patch.object(
         subtensor,
         "sign_and_send_extrinsic",
-        return_value=(False, "Transaction failed"),
+        return_value=ExtrinsicResponse(False, "Transaction failed"),
     )
 
     # Call
@@ -253,13 +262,13 @@ async def test_root_register_extrinsic_transaction_failed(
     )
 
     # Asserts
-    mocked_unlock_key.assert_called_once_with(fake_wallet)
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False, unlock_type="both")
     mocked_is_hotkey_registered.assert_called_once_with(
         netuid=0, hotkey_ss58="fake_hotkey_address"
     )
     mocked_compose_call.assert_called_once()
     mocked_sign_and_send_extrinsic.assert_called_once()
-    assert result is False
+    assert result.success is False
 
 
 @pytest.mark.asyncio
@@ -279,20 +288,20 @@ async def test_root_register_extrinsic_uid_not_found(subtensor, fake_wallet, moc
         return_value=Balance(1),
     )
     mocked_unlock_key = mocker.patch.object(
-        async_root,
-        "unlock_key",
-        return_value=mocker.Mock(success=True, message="Unlocked"),
+        async_root.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=True, message="Unlocked"),
     )
     mocked_is_hotkey_registered = mocker.patch.object(
         subtensor,
         "is_hotkey_registered",
         return_value=False,
     )
-    mocked_compose_call = mocker.patch.object(subtensor.substrate, "compose_call")
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
     mocked_sign_and_send_extrinsic = mocker.patch.object(
         subtensor,
         "sign_and_send_extrinsic",
-        return_value=(True, ""),
+        return_value=ExtrinsicResponse(True, ""),
     )
     mocked_query = mocker.patch.object(
         subtensor.substrate,
@@ -309,7 +318,7 @@ async def test_root_register_extrinsic_uid_not_found(subtensor, fake_wallet, moc
     )
 
     # Asserts
-    mocked_unlock_key.assert_called_once_with(fake_wallet)
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False, unlock_type="both")
     mocked_is_hotkey_registered.assert_called_once_with(
         netuid=0, hotkey_ss58="fake_hotkey_address"
     )
@@ -319,340 +328,194 @@ async def test_root_register_extrinsic_uid_not_found(subtensor, fake_wallet, moc
         module="SubtensorModule",
         storage_function="Uids",
         params=[0, "fake_hotkey_address"],
+        block_hash=None,
+        reuse_block_hash=False,
     )
-    assert result is False
+    assert result.success is False
 
 
 @pytest.mark.asyncio
-async def test_do_set_root_weights_success(subtensor, fake_wallet, mocker):
-    """Tests _do_set_root_weights when weights are set successfully."""
-    # Preps
-    fake_wallet.hotkey.ss58_address = "fake_hotkey_address"
-    fake_uids = [1, 2, 3]
-    fake_weights = [0.1, 0.2, 0.7]
-
-    fake_call = mocker.AsyncMock()
-    fake_extrinsic = True, "Successfully set weights."
-    fake_response = mocker.Mock()
-
-    fake_response.is_success = mocker.AsyncMock(return_value=True)()
-    fake_response.process_events = mocker.AsyncMock()
-
-    mocker.patch.object(subtensor.substrate, "compose_call", return_value=fake_call)
-    mocker.patch.object(
-        subtensor, "sign_and_send_extrinsic", return_value=fake_extrinsic
-    )
-
-    # Call
-    result, message = await async_root._do_set_root_weights(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuids=fake_uids,
-        weights=fake_weights,
-        version_key=0,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    subtensor.substrate.compose_call.assert_called_once_with(
-        call_module="SubtensorModule",
-        call_function="set_root_weights",
-        call_params={
-            "dests": fake_uids,
-            "weights": fake_weights,
-            "netuid": 0,
-            "version_key": 0,
-            "hotkey": "fake_hotkey_address",
-        },
-    )
-    subtensor.sign_and_send_extrinsic.assert_called_once_with(
-        call=fake_call,
-        wallet=fake_wallet,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-        use_nonce=True,
-        period=8,
-    )
-    assert result is True
-    assert message == "Successfully set weights."
-
-
-@pytest.mark.asyncio
-async def test_do_set_root_weights_failure(subtensor, fake_wallet, mocker):
-    """Tests _do_set_root_weights when setting weights fails."""
-    # Preps
-    fake_wallet.hotkey.ss58_address = "fake_hotkey_address"
-    fake_uids = [1, 2, 3]
-    fake_weights = [0.1, 0.2, 0.7]
-
-    fake_call = mocker.AsyncMock()
-
-    mocker.patch.object(subtensor.substrate, "compose_call", return_value=fake_call)
-    mocker.patch.object(
-        subtensor, "sign_and_send_extrinsic", return_value=(False, "Transaction failed")
-    )
-
-    # Call
-    result, message = await async_root._do_set_root_weights(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuids=fake_uids,
-        weights=fake_weights,
-        version_key=0,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    assert result is False
-
-
-@pytest.mark.asyncio
-async def test_do_set_root_weights_no_waiting(subtensor, fake_wallet, mocker):
-    """Tests _do_set_root_weights when not waiting for inclusion or finalization."""
-    # Preps
-    fake_wallet.hotkey.ss58_address = "fake_hotkey_address"
-    fake_uids = [1, 2, 3]
-    fake_weights = [0.1, 0.2, 0.7]
-
-    fake_call = mocker.AsyncMock()
-    fake_extrinsic = mocker.AsyncMock()
-
-    mocker.patch.object(subtensor.substrate, "compose_call", return_value=fake_call)
-    mocker.patch.object(
-        subtensor,
-        "sign_and_send_extrinsic",
-        return_value=(True, "Not waiting for finalization or inclusion."),
-    )
-
-    # Call
-    result, message = await async_root._do_set_root_weights(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuids=fake_uids,
-        weights=fake_weights,
-        version_key=0,
-        wait_for_inclusion=False,
-        wait_for_finalization=False,
-    )
-
-    # Asserts
-    subtensor.substrate.compose_call.assert_called_once()
-    subtensor.sign_and_send_extrinsic.assert_called_once_with(
-        call=subtensor.substrate.compose_call.return_value,
-        wallet=fake_wallet,
-        wait_for_inclusion=False,
-        wait_for_finalization=False,
-        use_nonce=True,
-        period=8,
-    )
-    assert result is True
-    assert message == "Not waiting for finalization or inclusion."
-
-
-@pytest.mark.asyncio
-async def test_set_root_weights_extrinsic_success(subtensor, fake_wallet, mocker):
-    """Tests successful setting of root weights."""
-    fake_wallet.hotkey.ss58_address = "fake_hotkey"
-    netuids = [1, 2, 3]
-    weights = [0.1, 0.2, 0.7]
-
-    mocker.patch.object(subtensor.substrate, "query", return_value=123)
-    mocker.patch.object(
-        async_root, "unlock_key", return_value=mocker.Mock(success=True)
-    )
-    mocker.patch.object(async_root, "_get_limits", return_value=(2, 1.0))
-    mocker.patch.object(async_root, "normalize_max_weight", return_value=weights)
-    mocked_do_set_root_weights = mocker.patch.object(
-        async_root,
-        "_do_set_root_weights",
-        return_value=(True, ""),
-    )
-
-    result = await async_root.set_root_weights_extrinsic(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuids=netuids,
-        weights=weights,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    mocked_do_set_root_weights.assert_called_once()
-    assert result is True
-
-
-@pytest.mark.asyncio
-async def test_set_root_weights_extrinsic_no_waiting(subtensor, fake_wallet, mocker):
-    """Tests setting root weights without waiting for inclusion or finalization."""
-    fake_wallet.hotkey.ss58_address = "fake_hotkey"
-    netuids = [1, 2, 3]
-    weights = [0.1, 0.2, 0.7]
-
-    mocker.patch.object(subtensor.substrate, "query", return_value=123)
-    mocker.patch.object(
-        async_root, "unlock_key", return_value=mocker.Mock(success=True)
-    )
-    mocker.patch.object(async_root, "_get_limits", return_value=(2, 1.0))
-    mocker.patch.object(async_root, "normalize_max_weight", return_value=weights)
-    mocked_do_set_root_weights = mocker.patch.object(
-        async_root,
-        "_do_set_root_weights",
-        return_value=(True, ""),
-    )
-
-    result = await async_root.set_root_weights_extrinsic(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuids=netuids,
-        weights=weights,
-        wait_for_inclusion=False,
-        wait_for_finalization=False,
-    )
-
-    mocked_do_set_root_weights.assert_called_once()
-    assert result is True
-
-
-@pytest.mark.asyncio
-async def test_set_root_weights_extrinsic_not_registered(
-    subtensor, fake_wallet, mocker
+@pytest.mark.parametrize(
+    "new_root_claim_type, expected_normalized",
+    [
+        ("Swap", "Swap"),
+        ("Keep", "Keep"),
+        (RootClaimType.Swap, "Swap"),
+        (RootClaimType.Keep, "Keep"),
+        (
+            {"KeepSubnets": {"subnets": [1, 2, 3]}},
+            {"KeepSubnets": {"subnets": [1, 2, 3]}},
+        ),
+        (RootClaimType.KeepSubnets([1, 2, 3]), {"KeepSubnets": {"subnets": [1, 2, 3]}}),
+    ],
+    ids=[
+        "string-swap",
+        "string-keep",
+        "enum-swap",
+        "enum-keep",
+        "dict-keep-subnets",
+        "callable-keep-subnets",
+    ],
+)
+async def test_set_root_claim_type_extrinsic(
+    subtensor, fake_wallet, mocker, new_root_claim_type, expected_normalized
 ):
-    """Tests failure when hotkey is not registered."""
-    fake_wallet.hotkey.ss58_address = "fake_hotkey"
+    """Tests `set_root_claim_type_extrinsic` extrinsic function with various input formats."""
+    # Preps
+    mocked_normalize = mocker.patch.object(
+        RootClaimType, "normalize", return_value=expected_normalized
+    )
+    mocked_pallet_compose_call = mocker.patch.object(
+        async_root.SubtensorModule, "set_root_claim_type", new=mocker.AsyncMock()
+    )
+    mocked_sign_and_send_extrinsic = mocker.patch.object(
+        subtensor, "sign_and_send_extrinsic"
+    )
 
-    mocker.patch.object(subtensor.substrate, "query", return_value=None)
-
-    result = await async_root.set_root_weights_extrinsic(
+    # call
+    response = await async_root.set_root_claim_type_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        netuids=[1, 2, 3],
-        weights=[0.1, 0.2, 0.7],
+        new_root_claim_type=new_root_claim_type,
     )
 
-    assert result is False
+    # asserts
+    mocked_normalize.assert_called_once_with(new_root_claim_type)
+    mocked_pallet_compose_call.assert_awaited_once_with(
+        new_root_claim_type=expected_normalized,
+    )
+    mocked_sign_and_send_extrinsic.assert_awaited_once_with(
+        call=mocked_pallet_compose_call.return_value,
+        wallet=fake_wallet,
+        period=None,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+    )
+    assert response == mocked_sign_and_send_extrinsic.return_value
 
 
+@pytest.mark.parametrize(
+    "invalid_input, expected_error",
+    [
+        ("InvalidType", ValueError),
+        ({"InvalidKey": {}}, ValueError),
+        ({"KeepSubnets": {}}, ValueError),  # Empty subnets
+        ({"KeepSubnets": {"subnets": []}}, ValueError),  # Empty subnets list
+        (
+            {"KeepSubnets": {"subnets": ["not", "integers"]}},
+            ValueError,
+        ),  # Non-integer subnets
+        (123, TypeError),  # Wrong type
+    ],
+    ids=[
+        "invalid-string",
+        "invalid-dict-key",
+        "empty-subnets-dict",
+        "empty-subnets-list",
+        "non-integer-subnets",
+        "wrong-type",
+    ],
+)
 @pytest.mark.asyncio
-async def test_set_root_weights_extrinsic_insufficient_weights(
-    subtensor, fake_wallet, mocker
+async def test_set_root_claim_type_extrinsic_validation_with_raise_error(
+    subtensor, fake_wallet, mocker, invalid_input, expected_error
 ):
-    """Tests failure when number of weights is less than the minimum allowed."""
-    fake_wallet.hotkey.ss58_address = "fake_hotkey"
-    netuids = [1, 2]
-    weights = [0.5, 0.5]
-
-    mocker.patch.object(subtensor.substrate, "query", return_value=123)
-    mocker.patch.object(
-        async_root, "unlock_key", return_value=mocker.Mock(success=True)
+    """Tests `set_root_claim_type_extrinsic` validation for invalid inputs with raise_error=True."""
+    # Preps
+    test_error = expected_error("Test error")
+    mocked_normalize = mocker.patch.object(
+        RootClaimType, "normalize", side_effect=test_error
     )
-    mocker.patch.object(async_root, "_get_limits", return_value=(3, 1.0))
+    mocked_pallet_compose_call = mocker.patch.object(
+        async_root.SubtensorModule, "set_root_claim_type", new=mocker.AsyncMock()
+    )
 
-    with pytest.raises(ValueError):
-        await async_root.set_root_weights_extrinsic(
+    # call and assert
+    with pytest.raises(expected_error):
+        await async_root.set_root_claim_type_extrinsic(
             subtensor=subtensor,
             wallet=fake_wallet,
-            netuids=netuids,
-            weights=weights,
+            new_root_claim_type=invalid_input,
+            raise_error=True,
         )
 
+    mocked_normalize.assert_called_once_with(invalid_input)
+    mocked_pallet_compose_call.assert_not_awaited()
 
+
+@pytest.mark.parametrize(
+    "invalid_input, expected_error",
+    [
+        ("InvalidType", ValueError),
+        ({"InvalidKey": {}}, ValueError),
+        ({"KeepSubnets": {"subnets": []}}, ValueError),  # Empty subnets list
+        (123, TypeError),  # Wrong type
+    ],
+    ids=[
+        "invalid-string-no-raise",
+        "invalid-dict-key-no-raise",
+        "empty-subnets-list-no-raise",
+        "wrong-type-no-raise",
+    ],
+)
 @pytest.mark.asyncio
-async def test_set_root_weights_extrinsic_unlock_failed(subtensor, fake_wallet, mocker):
-    """Tests failure due to unlock key error."""
-    fake_wallet.hotkey.ss58_address = "fake_hotkey"
-
-    mocker.patch.object(subtensor.substrate, "query", return_value=123)
-    mocker.patch.object(
-        async_root,
-        "unlock_key",
-        return_value=mocker.Mock(success=False, message="Unlock failed"),
-    )
-
-    result = await async_root.set_root_weights_extrinsic(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuids=[1, 2, 3],
-        weights=[0.1, 0.2, 0.7],
-    )
-
-    assert result is False
-
-
-@pytest.mark.asyncio
-async def test_set_root_weights_extrinsic_transaction_failed(
-    subtensor, fake_wallet, mocker
+async def test_set_root_claim_type_extrinsic_validation_without_raise_error(
+    subtensor, fake_wallet, mocker, invalid_input, expected_error
 ):
-    """Tests failure when transaction is not successful."""
-    fake_wallet.hotkey.ss58_address = "fake_hotkey"
+    """Tests `set_root_claim_type_extrinsic` validation for invalid inputs with raise_error=False."""
+    # Preps
+    test_error = expected_error("Test error")
+    mocked_normalize = mocker.patch.object(
+        RootClaimType, "normalize", side_effect=test_error
+    )
+    mocked_pallet_compose_call = mocker.patch.object(
+        async_root.SubtensorModule, "set_root_claim_type", new=mocker.AsyncMock()
+    )
+    mocked_from_exception = mocker.patch.object(ExtrinsicResponse, "from_exception")
 
-    mocker.patch.object(subtensor.substrate, "query", return_value=123)
-    mocker.patch.object(
-        async_root, "unlock_key", return_value=mocker.Mock(success=True)
-    )
-    mocker.patch.object(async_root, "_get_limits", return_value=(2, 1.0))
-    mocker.patch.object(
-        async_root, "normalize_max_weight", return_value=[0.1, 0.2, 0.7]
-    )
-    mocked_do_set_root_weights = mocker.patch.object(
-        async_root,
-        "_do_set_root_weights",
-        return_value=(False, "Transaction failed"),
-    )
-
-    result = await async_root.set_root_weights_extrinsic(
+    # call
+    response = await async_root.set_root_claim_type_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        netuids=[1, 2, 3],
-        weights=[0.1, 0.2, 0.7],
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
+        new_root_claim_type=invalid_input,
+        raise_error=False,
     )
 
-    mocked_do_set_root_weights.assert_called_once()
-    assert result is False
+    # assert
+    mocked_normalize.assert_called_once_with(invalid_input)
+    mocked_pallet_compose_call.assert_not_awaited()
+    mocked_from_exception.assert_called_once_with(raise_error=False, error=test_error)
+    assert response == mocked_from_exception.return_value
 
 
 @pytest.mark.asyncio
-async def test_set_root_weights_extrinsic_request_exception(
-    subtensor, fake_wallet, mocker
-):
-    """Tests failure due to SubstrateRequestException."""
-    fake_wallet.hotkey.ss58_address = "fake_hotkey"
-
-    mocker.patch.object(subtensor.substrate, "query", return_value=123)
-    mocker.patch.object(
-        async_root, "unlock_key", return_value=mocker.Mock(success=True)
+async def test_claim_root_extrinsic(subtensor, fake_wallet, mocker):
+    """Tests `claim_root_extrinsic` extrinsic function."""
+    # Preps
+    netuids = mocker.Mock(spec=list)
+    mocked_pallet_compose_call = mocker.patch.object(
+        async_root.SubtensorModule, "claim_root", new=mocker.AsyncMock()
     )
-    mocker.patch.object(async_root, "_get_limits", return_value=(2, 1.0))
-    mocked_do_set_root_weights = mocker.patch.object(
-        async_root,
-        "_do_set_root_weights",
-        side_effect=SubstrateRequestException("Request failed"),
-    )
-    mocked_format_error_message = mocker.patch.object(
-        async_root, "format_error_message"
+    mocked_sign_and_send_extrinsic = mocker.patch.object(
+        subtensor, "sign_and_send_extrinsic"
     )
 
-    result = await async_root.set_root_weights_extrinsic(
+    # call
+    response = await async_root.claim_root_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        netuids=[1, 2, 3],
-        weights=[0.1, 0.2, 0.7],
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
+        netuids=netuids,
     )
 
-    assert result is False
-    mocked_do_set_root_weights.assert_called_once_with(
-        subtensor=subtensor,
+    # asserts
+    mocked_pallet_compose_call.assert_called_once_with(subnets=netuids)
+    mocked_sign_and_send_extrinsic.assert_awaited_once_with(
+        call=mocked_pallet_compose_call.return_value,
         wallet=fake_wallet,
-        netuids=[1, 2, 3],
-        weights=[9362, 18724, 65535],
-        version_key=0,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
         period=None,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
     )
-    mocked_format_error_message.assert_called_once()
+    assert response == mocked_sign_and_send_extrinsic.return_value

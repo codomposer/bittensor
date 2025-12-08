@@ -25,7 +25,7 @@ async def prepare_test(mocker, seed, **subtensor_args):
         "async_substrate_interface.sync_substrate.connect",
         mocker.Mock(return_value=FakeWebsocket(seed=seed)),
     )
-    subtensor = Subtensor("unknown", _mock=True, **subtensor_args)
+    subtensor = Subtensor("unknown", mock=True, **subtensor_args)
     return subtensor
 
 
@@ -46,7 +46,7 @@ async def test_metagraph(mocker):
     result = subtensor.metagraph(1)
     assert result.n == 1024
     assert result.netuid == 1
-    assert result.block.item() == 6530367
+    assert result.block.item() == 6852690
 
 
 @pytest.mark.asyncio
@@ -96,7 +96,7 @@ async def test_is_hotkey_registered(mocker):
 async def test_blocks_since_last_update(mocker):
     subtensor = await prepare_test(mocker, "blocks_since_last_update")
     result = subtensor.blocks_since_last_update(1, 0)
-    assert result == 3978699
+    assert result == 4009702
 
 
 @pytest.mark.asyncio

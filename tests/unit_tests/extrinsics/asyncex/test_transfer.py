@@ -1,164 +1,8 @@
 import pytest
+
 from bittensor.core.extrinsics.asyncex import transfer as async_transfer
+from bittensor.core.types import ExtrinsicResponse
 from bittensor.utils.balance import Balance
-
-
-@pytest.mark.parametrize(
-    "amount,keep_alive,call_function,call_params",
-    [
-        (
-            Balance(1),
-            True,
-            "transfer_keep_alive",
-            {"dest": "SS58PUBLICKEY", "value": Balance(1).rao},
-        ),
-        (None, True, "transfer_all", {"dest": "SS58PUBLICKEY", "keep_alive": True}),
-        (None, False, "transfer_all", {"dest": "SS58PUBLICKEY", "keep_alive": False}),
-        (
-            Balance(1),
-            False,
-            "transfer_allow_death",
-            {"dest": "SS58PUBLICKEY", "value": Balance(1).rao},
-        ),
-    ],
-)
-@pytest.mark.asyncio
-async def test_do_transfer_success(
-    subtensor, fake_wallet, mocker, amount, keep_alive, call_function, call_params
-):
-    """Tests _do_transfer when the transfer is successful."""
-    # Preps
-    fake_destination = "SS58PUBLICKEY"
-    fake_block_hash = "fake_block_hash"
-
-    mocker.patch.object(subtensor.substrate, "compose_call")
-    mocker.patch.object(
-        subtensor,
-        "sign_and_send_extrinsic",
-        new=mocker.AsyncMock(return_value=(True, "")),
-    )
-    mocker.patch.object(subtensor, "get_block_hash", return_value=fake_block_hash)
-
-    # Call
-    success, block_hash, error_message = await async_transfer._do_transfer(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        destination=fake_destination,
-        amount=amount,
-        keep_alive=keep_alive,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    subtensor.substrate.compose_call.assert_awaited_once_with(
-        call_module="Balances",
-        call_function=call_function,
-        call_params=call_params,
-    )
-
-    subtensor.sign_and_send_extrinsic.assert_awaited_once_with(
-        call=subtensor.substrate.compose_call.return_value,
-        wallet=fake_wallet,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-        period=None,
-    )
-    assert success is True
-    assert block_hash == "fake_block_hash"
-    assert error_message == "Success with response."
-
-
-@pytest.mark.asyncio
-async def test_do_transfer_failure(subtensor, fake_wallet, mocker):
-    """Tests _do_transfer when the transfer fails."""
-    # Preps
-    fake_destination = "destination_address"
-    fake_amount = mocker.Mock(autospec=Balance, rao=1000)
-    fake_block_hash = "fake_block_hash"
-
-    mocker.patch.object(subtensor.substrate, "compose_call")
-    mocker.patch.object(
-        subtensor,
-        "sign_and_send_extrinsic",
-        new=mocker.AsyncMock(return_value=(False, "Formatted error message")),
-    )
-    mocker.patch.object(subtensor, "get_block_hash", return_value=fake_block_hash)
-
-    # Call
-    success, block_hash, error_message = await async_transfer._do_transfer(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        destination=fake_destination,
-        amount=fake_amount,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    subtensor.substrate.compose_call.assert_awaited_once_with(
-        call_module="Balances",
-        call_function="transfer_keep_alive",
-        call_params={"dest": fake_destination, "value": fake_amount.rao},
-    )
-
-    subtensor.sign_and_send_extrinsic.assert_awaited_once_with(
-        call=subtensor.substrate.compose_call.return_value,
-        wallet=fake_wallet,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-        period=None,
-    )
-    assert success is False
-    assert block_hash == ""
-    assert error_message == "Formatted error message"
-
-
-@pytest.mark.asyncio
-async def test_do_transfer_no_waiting(subtensor, fake_wallet, mocker):
-    """Tests _do_transfer when no waiting for inclusion or finalization."""
-    # Preps
-    fake_destination = "destination_address"
-    fake_amount = mocker.Mock(autospec=Balance, rao=1000)
-    fake_block_hash = "fake_block_hash"
-
-    mocker.patch.object(subtensor.substrate, "compose_call")
-    mocker.patch.object(
-        subtensor,
-        "sign_and_send_extrinsic",
-        new=mocker.AsyncMock(
-            return_value=(False, "Success, extrinsic submitted without waiting.")
-        ),
-    )
-    mocker.patch.object(subtensor, "get_block_hash", return_value=fake_block_hash)
-
-    # Call
-    success, block_hash, error_message = await async_transfer._do_transfer(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        destination=fake_destination,
-        amount=fake_amount,
-        wait_for_inclusion=False,
-        wait_for_finalization=False,
-    )
-
-    # Asserts
-    subtensor.substrate.compose_call.assert_awaited_once_with(
-        call_module="Balances",
-        call_function="transfer_keep_alive",
-        call_params={"dest": fake_destination, "value": fake_amount.rao},
-    )
-
-    subtensor.sign_and_send_extrinsic.assert_awaited_once_with(
-        call=subtensor.substrate.compose_call.return_value,
-        wallet=fake_wallet,
-        wait_for_inclusion=False,
-        wait_for_finalization=False,
-        period=None,
-    )
-    assert success is True
-    assert block_hash == ""
-    assert error_message == "Success, extrinsic submitted without waiting."
 
 
 @pytest.mark.asyncio
@@ -175,9 +19,9 @@ async def test_transfer_extrinsic_success(subtensor, fake_wallet, mocker):
         return_value=True,
     )
     mocked_unlock_key = mocker.patch.object(
-        async_transfer,
-        "unlock_key",
-        return_value=mocker.Mock(success=True, message="Unlocked"),
+        async_transfer.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=True, message="Unlocked"),
     )
     mocked_get_chain_head = mocker.patch.object(
         subtensor.substrate, "get_chain_head", return_value="some_block_hash"
@@ -193,15 +37,16 @@ async def test_transfer_extrinsic_success(subtensor, fake_wallet, mocker):
     subtensor.get_transfer_fee = mocker.patch.object(
         subtensor, "get_transfer_fee", return_value=2
     )
-    mocked_do_transfer = mocker.patch.object(
-        async_transfer, "_do_transfer", return_value=(True, "fake_block_hash", "")
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
+    mocked_sign_and_send_extrinsic = mocker.patch.object(
+        subtensor, "sign_and_send_extrinsic", return_value=ExtrinsicResponse(True, "")
     )
 
     # Call
     result = await async_transfer.transfer_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        dest=fake_destination,
+        destination_ss58=fake_destination,
         amount=fake_amount,
         transfer_all=False,
         wait_for_inclusion=True,
@@ -211,16 +56,23 @@ async def test_transfer_extrinsic_success(subtensor, fake_wallet, mocker):
 
     # Asserts
     mocked_is_valid_address.assert_called_once_with(fake_destination)
-    mocked_unlock_key.assert_called_once_with(fake_wallet)
-    mocked_get_chain_head.assert_called_once()
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False)
+    assert mocked_get_chain_head.call_count == 2
     mocked_get_balance.assert_called_with(
         fake_wallet.coldkeypub.ss58_address,
     )
     mocked_get_existential_deposit.assert_called_once_with(
         block_hash=mocked_get_chain_head.return_value
     )
-    mocked_do_transfer.assert_called_once()
-    assert result is True
+    mocked_sign_and_send_extrinsic.assert_awaited_once_with(
+        call=mocked_compose_call.return_value,
+        wallet=fake_wallet,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        period=None,
+        raise_error=False,
+    )
+    assert result.success is True
 
 
 @pytest.mark.asyncio
@@ -239,9 +91,9 @@ async def test_transfer_extrinsic_call_successful_with_failed_response(
         return_value=True,
     )
     mocked_unlock_key = mocker.patch.object(
-        async_transfer,
-        "unlock_key",
-        return_value=mocker.Mock(success=True, message="Unlocked"),
+        async_transfer.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=True, message="Unlocked"),
     )
     mocked_get_chain_head = mocker.patch.object(
         subtensor.substrate, "get_chain_head", return_value="some_block_hash"
@@ -257,15 +109,16 @@ async def test_transfer_extrinsic_call_successful_with_failed_response(
     subtensor.get_transfer_fee = mocker.patch.object(
         subtensor, "get_transfer_fee", return_value=2
     )
-    mocked_do_transfer = mocker.patch.object(
-        async_transfer, "_do_transfer", return_value=(False, "", "")
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
+    mocked_sign_and_send_extrinsic = mocker.patch.object(
+        subtensor, "sign_and_send_extrinsic", return_value=ExtrinsicResponse(False, "")
     )
 
     # Call
     result = await async_transfer.transfer_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        dest=fake_destination,
+        destination_ss58=fake_destination,
         amount=fake_amount,
         transfer_all=False,
         wait_for_inclusion=True,
@@ -275,7 +128,7 @@ async def test_transfer_extrinsic_call_successful_with_failed_response(
 
     # Asserts
     mocked_is_valid_address.assert_called_once_with(fake_destination)
-    mocked_unlock_key.assert_called_once_with(fake_wallet)
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False)
     mocked_get_chain_head.assert_called_once()
     mocked_get_balance.assert_called_with(
         fake_wallet.coldkeypub.ss58_address,
@@ -284,8 +137,15 @@ async def test_transfer_extrinsic_call_successful_with_failed_response(
     mocked_get_existential_deposit.assert_called_once_with(
         block_hash=mocked_get_chain_head.return_value
     )
-    mocked_do_transfer.assert_called_once()
-    assert result is False
+    mocked_sign_and_send_extrinsic.assert_awaited_once_with(
+        call=mocked_compose_call.return_value,
+        wallet=fake_wallet,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        period=None,
+        raise_error=False,
+    )
+    assert result.success is False
 
 
 @pytest.mark.asyncio
@@ -302,9 +162,9 @@ async def test_transfer_extrinsic_insufficient_balance(subtensor, fake_wallet, m
         return_value=True,
     )
     mocked_unlock_key = mocker.patch.object(
-        async_transfer,
-        "unlock_key",
-        return_value=mocker.Mock(success=True, message="Unlocked"),
+        async_transfer.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=True, message="Unlocked"),
     )
     mocked_get_chain_head = mocker.patch.object(
         subtensor.substrate, "get_chain_head", return_value="some_block_hash"
@@ -325,7 +185,7 @@ async def test_transfer_extrinsic_insufficient_balance(subtensor, fake_wallet, m
     result = await async_transfer.transfer_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        dest=fake_destination,
+        destination_ss58=fake_destination,
         amount=fake_amount,
         transfer_all=False,
         wait_for_inclusion=True,
@@ -335,13 +195,13 @@ async def test_transfer_extrinsic_insufficient_balance(subtensor, fake_wallet, m
 
     # Asserts
     mocked_is_valid_address.assert_called_once_with(fake_destination)
-    mocked_unlock_key.assert_called_once_with(fake_wallet)
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False)
     mocked_get_chain_head.assert_called_once()
     mocked_get_balance.assert_called_once()
     mocked_get_existential_deposit.assert_called_once_with(
         block_hash=mocked_get_chain_head.return_value
     )
-    assert result is False
+    assert result.success is False
 
 
 @pytest.mark.asyncio
@@ -362,7 +222,7 @@ async def test_transfer_extrinsic_invalid_destination(subtensor, fake_wallet, mo
     result = await async_transfer.transfer_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        dest=fake_destination,
+        destination_ss58=fake_destination,
         amount=fake_amount,
         transfer_all=False,
         wait_for_inclusion=True,
@@ -372,7 +232,7 @@ async def test_transfer_extrinsic_invalid_destination(subtensor, fake_wallet, mo
 
     # Asserts
     mocked_is_valid_address.assert_called_once_with(fake_destination)
-    assert result is False
+    assert result.success is False
 
 
 @pytest.mark.asyncio
@@ -383,23 +243,17 @@ async def test_transfer_extrinsic_unlock_key_false(subtensor, fake_wallet, mocke
     fake_destination = "invalid_address"
     fake_amount = Balance(15)
 
-    mocked_is_valid_address = mocker.patch.object(
-        async_transfer,
-        "is_valid_bittensor_address_or_public_key",
-        return_value=True,
-    )
-
     mocked_unlock_key = mocker.patch.object(
-        async_transfer,
-        "unlock_key",
-        return_value=mocker.Mock(success=False, message=""),
+        async_transfer.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=False, message="Unlocked"),
     )
 
     # Call
     result = await async_transfer.transfer_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        dest=fake_destination,
+        destination_ss58=fake_destination,
         amount=fake_amount,
         transfer_all=False,
         wait_for_inclusion=True,
@@ -408,9 +262,8 @@ async def test_transfer_extrinsic_unlock_key_false(subtensor, fake_wallet, mocke
     )
 
     # Asserts
-    mocked_is_valid_address.assert_called_once_with(fake_destination)
-    mocked_unlock_key.assert_called_once_with(fake_wallet)
-    assert result is False
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False)
+    assert result.success is False
 
 
 @pytest.mark.asyncio
@@ -429,9 +282,9 @@ async def test_transfer_extrinsic_keep_alive_false_and_transfer_all_true(
         return_value=True,
     )
     mocked_unlock_key = mocker.patch.object(
-        async_transfer,
-        "unlock_key",
-        return_value=mocker.Mock(success=True, message="Unlocked"),
+        async_transfer.ExtrinsicResponse,
+        "unlock_wallet",
+        return_value=ExtrinsicResponse(success=True, message="Unlocked"),
     )
     mocked_get_chain_head = mocker.patch.object(
         subtensor.substrate, "get_chain_head", return_value="some_block_hash"
@@ -447,15 +300,16 @@ async def test_transfer_extrinsic_keep_alive_false_and_transfer_all_true(
     subtensor.get_transfer_fee = mocker.patch.object(
         subtensor, "get_transfer_fee", return_value=2
     )
-    mocked_do_transfer = mocker.patch.object(
-        async_transfer, "_do_transfer", return_value=(True, "fake_block_hash", "")
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
+    mocked_sign_and_send_extrinsic = mocker.patch.object(
+        subtensor, "sign_and_send_extrinsic", return_value=ExtrinsicResponse(True, "")
     )
 
     # Call
     result = await async_transfer.transfer_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        dest=fake_destination,
+        destination_ss58=fake_destination,
         amount=fake_amount,
         transfer_all=True,
         wait_for_inclusion=True,
@@ -465,11 +319,12 @@ async def test_transfer_extrinsic_keep_alive_false_and_transfer_all_true(
 
     # Asserts
     mocked_is_valid_address.assert_called_once_with(fake_destination)
-    mocked_unlock_key.assert_called_once_with(fake_wallet)
+    mocked_unlock_key.assert_called_once_with(fake_wallet, False)
     mocked_get_chain_head.assert_called_once()
 
     mocked_get_existential_deposit.assert_called_once_with(
         block_hash=mocked_get_chain_head.return_value
     )
-    mocked_do_transfer.assert_not_called()
-    assert result is False
+    assert mocked_compose_call.call_count == 0
+    assert mocked_sign_and_send_extrinsic.call_count == 0
+    assert result.success is False

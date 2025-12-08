@@ -1,23 +1,33 @@
+import time
+
 import numpy as np
 import pytest
 import retry
 
-from bittensor.core.extrinsics.sudo import (
-    sudo_set_mechanism_count_extrinsic,
-    sudo_set_admin_freeze_window_extrinsic,
-)
 from bittensor.utils.balance import Balance
 from bittensor.utils.btlogging import logging
 from bittensor.utils.weight_utils import convert_weights_and_uids_for_emit
-from tests.e2e_tests.utils.chain_interactions import (
-    sudo_set_hyperparameter_bool,
-    sudo_set_admin_utils,
+from tests.e2e_tests.utils import (
     execute_and_wait_for_next_nonce,
+    AdminUtils,
+    TestSubnet,
+    ACTIVATE_SUBNET,
+    REGISTER_SUBNET,
+    NETUID,
+    SUDO_SET_ADMIN_FREEZE_WINDOW,
+    SUDO_SET_COMMIT_REVEAL_WEIGHTS_ENABLED,
+    SUDO_SET_LOCK_REDUCTION_INTERVAL,
+    SUDO_SET_MECHANISM_COUNT,
+    SUDO_SET_NETWORK_RATE_LIMIT,
+    SUDO_SET_TEMPO,
+    SUDO_SET_WEIGHTS_SET_RATE_LIMIT,
 )
 
+TESTED_MECHANISMS = 2
+TESTED_NETUIDS = [2, 3]
 
-@pytest.mark.asyncio
-async def test_set_weights_uses_next_nonce(local_chain, subtensor, alice_wallet):
+
+def test_set_weights_uses_next_nonce(subtensor, alice_wallet):
     """
     Tests that setting weights doesn't re-use a nonce in the transaction pool.
 
@@ -31,113 +41,75 @@ async def test_set_weights_uses_next_nonce(local_chain, subtensor, alice_wallet)
     Raises:
         AssertionError: If any of the checks or verifications fail
     """
-    # turn off admin freeze window limit for testing
-    assert sudo_set_admin_freeze_window_extrinsic(
-        subtensor=subtensor,
-        wallet=alice_wallet,
-        window=0,
-    )
-
-    netuids = [2, 3]
-    TESTED_SUB_SUBNETS = 2
-
-    # 12 for non-fast-block, 0.25 for fast block
     block_time, subnet_tempo = (
         (0.25, 50) if subtensor.chain.is_fast_blocks() else (12.0, 20)
     )
 
-    print("Testing test_set_weights_uses_next_nonce")
+    sns = [TestSubnet(subtensor) for _ in TESTED_NETUIDS]
 
-    # Lower the network registration rate limit and cost
-    sudo_set_admin_utils(
-        substrate=subtensor.substrate,
-        wallet=alice_wallet,
-        call_function="sudo_set_network_rate_limit",
-        call_params={"rate_limit": "0"},  # No limit
-    )
-    # Set lock reduction interval
-    sudo_set_admin_utils(
-        substrate=subtensor.substrate,
-        wallet=alice_wallet,
-        call_function="sudo_set_lock_reduction_interval",
-        call_params={"interval": "1"},  # 1 block # reduce lock every block
-    )
+    hps_set_steps = [
+        SUDO_SET_ADMIN_FREEZE_WINDOW(alice_wallet, AdminUtils, True, 0),
+        SUDO_SET_NETWORK_RATE_LIMIT(alice_wallet, AdminUtils, True, 0),
+        SUDO_SET_LOCK_REDUCTION_INTERVAL(alice_wallet, AdminUtils, True, 1),
+    ]
 
-    # Try to register the subnets
-    for _ in netuids:
-        assert subtensor.register_subnet(
-            wallet=alice_wallet,
-            wait_for_inclusion=True,
-            wait_for_finalization=True,
-        ), "Unable to register the subnet"
+    sns[0].execute_steps(hps_set_steps)
 
-    # Verify all subnets created successfully
-    for netuid in netuids:
-        assert subtensor.subnet_exists(netuid), "Subnet wasn't created successfully"
+    sns_steps = [
+        REGISTER_SUBNET(alice_wallet),
+        SUDO_SET_TEMPO(alice_wallet, AdminUtils, True, NETUID, subnet_tempo),
+        SUDO_SET_MECHANISM_COUNT(
+            alice_wallet, AdminUtils, True, NETUID, TESTED_MECHANISMS
+        ),
+        ACTIVATE_SUBNET(alice_wallet),
+    ]
+    for sn in sns:
+        sn.execute_steps(sns_steps)
 
-        # weights sensitive to epoch changes
-        assert sudo_set_admin_utils(
-            substrate=subtensor.substrate,
-            wallet=alice_wallet,
-            call_function="sudo_set_tempo",
-            call_params={
-                "netuid": netuid,
-                "tempo": subnet_tempo,
-            },
-        )
-        assert sudo_set_mechanism_count_extrinsic(
-            subtensor=subtensor,
-            wallet=alice_wallet,
-            netuid=netuid,
-            mech_count=2,
-        )
-
-    # make sure 2 epochs are passed
+    # Make sure 2 epochs are passed
     subtensor.wait_for_block(subnet_tempo * 2 + 1)
 
     # Stake to become to top neuron after the first epoch
-    for netuid in netuids:
-        subtensor.add_stake(
+    for sn in sns:
+        assert subtensor.staking.add_stake(
             wallet=alice_wallet,
+            netuid=sn.netuid,
             hotkey_ss58=alice_wallet.hotkey.ss58_address,
-            netuid=netuid,
             amount=Balance.from_tao(10_000),
-        )
+        ).success
 
     # Set weight hyperparameters per subnet
-    for netuid in netuids:
-        assert sudo_set_hyperparameter_bool(
-            substrate=subtensor.substrate,
-            wallet=alice_wallet,
-            call_function="sudo_set_commit_reveal_weights_enabled",
-            value=False,
-            netuid=netuid,
-        ), "Unable to enable commit reveal on the subnet"
+    for sn in sns:
+        sn.execute_one(
+            SUDO_SET_COMMIT_REVEAL_WEIGHTS_ENABLED(
+                alice_wallet, AdminUtils, True, NETUID, False
+            )
+        )
 
-        assert not subtensor.commit_reveal_enabled(
-            netuid,
+        assert not subtensor.subnets.commit_reveal_enabled(
+            netuid=sn.netuid,
         ), "Failed to enable commit/reveal"
 
-        assert subtensor.weights_rate_limit(netuid=netuid) > 0, (
+        assert subtensor.subnets.weights_rate_limit(netuid=sn.netuid) > 0, (
             "Weights rate limit is below 0"
         )
 
         # Lower set weights rate limit
-        status, error = sudo_set_admin_utils(
-            substrate=subtensor.substrate,
-            wallet=alice_wallet,
-            call_function="sudo_set_weights_set_rate_limit",
-            call_params={"netuid": netuid, "weights_set_rate_limit": "0"},
+        response = sn.execute_one(
+            SUDO_SET_WEIGHTS_SET_RATE_LIMIT(alice_wallet, AdminUtils, True, NETUID, 0)
         )
-
-        assert error is None
-        assert status is True
+        assert response.success, response.message
 
         assert (
-            subtensor.get_subnet_hyperparameters(netuid=netuid).weights_rate_limit == 0
+            subtensor.subnets.get_subnet_hyperparameters(
+                netuid=sn.netuid
+            ).weights_rate_limit
+            == 0
         ), "Failed to set weights_rate_limit"
-        assert subtensor.get_hyperparameter("WeightsSetRateLimit", netuid) == 0
-        assert subtensor.weights_rate_limit(netuid=netuid) == 0
+        assert (
+            subtensor.subnets.get_hyperparameter("WeightsSetRateLimit", sn.netuid) == 0
+        )
+        assert subtensor.subnets.weights_rate_limit(netuid=sn.netuid) == 0
 
     # Weights values
     uids = np.array([0], dtype=np.int64)
@@ -155,7 +127,7 @@ async def test_set_weights_uses_next_nonce(local_chain, subtensor, alice_wallet)
     @retry.retry(exceptions=Exception, tries=3, delay=1)
     @execute_and_wait_for_next_nonce(subtensor=subtensor, wallet=alice_wallet)
     def set_weights(netuid_, mechid_):
-        success, message = subtensor.set_weights(
+        success, message = subtensor.extrinsics.set_weights(
             wallet=alice_wallet,
             netuid=netuid_,
             mechid=mechid_,
@@ -173,25 +145,200 @@ async def test_set_weights_uses_next_nonce(local_chain, subtensor, alice_wallet)
         f"{subtensor.substrate.get_account_next_index(alice_wallet.hotkey.ss58_address)}[/orange]"
     )
 
-    for mechid in range(TESTED_SUB_SUBNETS):
+    for mechid in range(TESTED_MECHANISMS):
         # Set weights for each subnet
-        for netuid in netuids:
-            set_weights(netuid, mechid)
+        for sn in sns:
+            set_weights(sn.netuid, mechid)
 
-        for netuid in netuids:
+        for sn in sns:
             # Query the Weights storage map for all three subnets
             weights = subtensor.subnets.weights(
-                netuid=netuid,
+                netuid=sn.netuid,
                 mechid=mechid,
             )
             alice_weights = weights[0][1]
             logging.console.info(
-                f"Weights for subnet mechanism {netuid}.{mechid}: {alice_weights}"
+                f"Weights for subnet mechanism {sn.netuid}.{mechid}: {alice_weights}"
             )
 
             assert alice_weights is not None, (
-                f"Weights not found for subnet mechanism {netuid}.{mechid}"
+                f"Weights not found for subnet mechanism {sn.netuid}.{mechid}"
             )
             assert alice_weights == list(zip(weight_uids, weight_vals)), (
-                f"Weights do not match for subnet {netuid}"
+                f"Weights do not match for subnet {sn.netuid}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_set_weights_uses_next_nonce_async(async_subtensor, alice_wallet):
+    """
+    Async tests that setting weights doesn't re-use a nonce in the transaction pool.
+
+    Steps:
+        1. Register three subnets through Alice
+        2. Register Alice's neuron on each subnet and add stake
+        3. Verify Alice has a vpermit on each subnet
+        4. Lower the set weights rate limit on each subnet
+        5. Set weights on each subnet
+        6. Assert that all the set weights succeeded
+    Raises:
+        AssertionError: If any of the checks or verifications fail
+    """
+    block_time, subnet_tempo = (
+        (0.25, 50) if await async_subtensor.chain.is_fast_blocks() else (12.0, 20)
+    )
+
+    sns = [TestSubnet(async_subtensor) for _ in TESTED_NETUIDS]
+
+    hps_set_steps = [
+        SUDO_SET_ADMIN_FREEZE_WINDOW(alice_wallet, AdminUtils, True, 0),
+        SUDO_SET_NETWORK_RATE_LIMIT(alice_wallet, AdminUtils, True, 0),
+        SUDO_SET_LOCK_REDUCTION_INTERVAL(alice_wallet, AdminUtils, True, 1),
+    ]
+    await sns[0].async_execute_steps(hps_set_steps)
+
+    sns_steps = [
+        REGISTER_SUBNET(alice_wallet),
+        SUDO_SET_TEMPO(alice_wallet, AdminUtils, True, NETUID, subnet_tempo),
+        SUDO_SET_MECHANISM_COUNT(
+            alice_wallet, AdminUtils, True, NETUID, TESTED_MECHANISMS
+        ),
+        ACTIVATE_SUBNET(alice_wallet),
+    ]
+    for sn in sns:
+        await sn.async_execute_steps(sns_steps)
+
+    # Make sure 2 epochs are passed
+    await async_subtensor.wait_for_block(subnet_tempo * 2 + 1)
+
+    # Stake to become to top neuron after the first epoch
+    for sn in sns:
+        assert (
+            await async_subtensor.staking.add_stake(
+                wallet=alice_wallet,
+                netuid=sn.netuid,
+                hotkey_ss58=alice_wallet.hotkey.ss58_address,
+                amount=Balance.from_tao(10_000),
+            )
+        ).success
+
+    # Set weight hyperparameters per subnet
+    for sn in sns:
+        await sn.async_execute_one(
+            SUDO_SET_COMMIT_REVEAL_WEIGHTS_ENABLED(
+                alice_wallet, AdminUtils, True, NETUID, False
+            )
+        )
+        assert not await async_subtensor.subnets.commit_reveal_enabled(
+            sn.netuid,
+        ), "Failed to enable commit/reveal"
+
+        assert await async_subtensor.subnets.weights_rate_limit(netuid=sn.netuid) > 0, (
+            "Weights rate limit is below 0"
+        )
+
+        # Lower set weights rate limit
+        response = await sn.async_execute_one(
+            SUDO_SET_WEIGHTS_SET_RATE_LIMIT(alice_wallet, AdminUtils, True, NETUID, 0)
+        )
+        assert response.success, response.message
+
+        assert (
+            await async_subtensor.subnets.get_subnet_hyperparameters(netuid=sn.netuid)
+        ).weights_rate_limit == 0, "Failed to set weights_rate_limit"
+        assert (
+            await async_subtensor.subnets.get_hyperparameter(
+                "WeightsSetRateLimit", sn.netuid
+            )
+            == 0
+        )
+        assert await async_subtensor.subnets.weights_rate_limit(netuid=sn.netuid) == 0
+
+    # Weights values
+    uids = np.array([0], dtype=np.int64)
+    weights = np.array([0.5], dtype=np.float32)
+    weight_uids, weight_vals = convert_weights_and_uids_for_emit(
+        uids=uids, weights=weights
+    )
+
+    logging.console.info(
+        f"[orange]Nonce before first set_weights: "
+        f"{await async_subtensor.substrate.get_account_nonce(alice_wallet.hotkey.ss58_address)}[/orange]"
+    )
+
+    async def set_weights(netuid_, mechid_):
+        """
+        To avoid adding asynchronous retrieval to dependencies, we implement a retrieval behavior with asynchronous
+        behavior.
+        """
+
+        async def set_weights_():
+            success_, message_ = await async_subtensor.extrinsics.set_weights(
+                wallet=alice_wallet,
+                netuid=netuid_,
+                mechid=mechid_,
+                uids=weight_uids,
+                weights=weight_vals,
+                period=subnet_tempo,
+                wait_for_inclusion=True,
+                wait_for_finalization=False,
+            )
+            assert success_ is True, message_
+
+        max_attempts = 3
+        timeout = 60.0
+        sleep = 0.25 if async_subtensor.chain.is_fast_blocks() else 12.0
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                start_nonce = await async_subtensor.substrate.get_account_nonce(
+                    alice_wallet.hotkey.ss58_address
+                )
+
+                result = await set_weights_()
+
+                start = time.time()
+                while (time.time() - start) < timeout:
+                    current_nonce = await async_subtensor.substrate.get_account_nonce(
+                        alice_wallet.hotkey.ss58_address
+                    )
+
+                    if current_nonce != start_nonce:
+                        logging.console.info(
+                            f"✅ Nonce changed from {start_nonce} to {current_nonce}"
+                        )
+                        return result
+                    logging.console.info(
+                        f"⏳ Waiting for nonce increment. Current: {current_nonce}"
+                    )
+                    time.sleep(sleep)
+            except Exception as e:
+                raise e
+        raise Exception(f"Failed to commit weights after {max_attempts} attempts.")
+
+    for mechid in range(TESTED_MECHANISMS):
+        # Set weights for each subnet
+        for sn in sns:
+            await set_weights(sn.netuid, mechid)
+
+        logging.console.info(
+            f"[orange]Nonce after second set_weights: "
+            f"{await async_subtensor.substrate.get_account_nonce(alice_wallet.hotkey.ss58_address)}[/orange]"
+        )
+
+        for sn in sns:
+            # Query the Weights storage map for all three subnets
+            weights = await async_subtensor.subnets.weights(
+                netuid=sn.netuid,
+                mechid=mechid,
+            )
+            alice_weights = weights[0][1]
+            logging.console.info(
+                f"Weights for subnet mechanism {sn.netuid}.{mechid}: {alice_weights}"
+            )
+            assert alice_weights is not None, (
+                f"Weights not found for subnet mechanism {sn.netuid}.{mechid}"
+            )
+            assert alice_weights == list(zip(weight_uids, weight_vals)), (
+                f"Weights do not match for subnet {sn.netuid}"
             )

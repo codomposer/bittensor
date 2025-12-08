@@ -1,22 +1,51 @@
 # Changelog
-## 9.12.2 /2025-10-30
-* Use uv pip for e2e dependency installation by @thewhaleking in https://github.com/opentensor/bittensor/pull/3109
-* Fix for `test_liquidity` by @basfroman in https://github.com/opentensor/bittensor/pull/3114
-* Apply default `era.period` to all subtensor extrinsic calls by @basfroman in https://github.com/opentensor/bittensor/pull/3115
-* set root owner for fast runtime time by @basfroman in https://github.com/opentensor/bittensor/pull/3118
-* Allow python 3.14 by @thewhaleking in https://github.com/opentensor/bittensor/pull/3122
 
-**Full Changelog**: https://github.com/opentensor/bittensor/compare/v9.12.1...v9.12.2
-
-## 9.12.1 /2025-10-20
+## 10.0.0rc4 /2025-11-26
 
 ## What's Changed
-* replace error by @basfroman in https://github.com/opentensor/bittensor/pull/3092
-* Update type hint/docstring for ws_shutdown_timer by @thewhaleking in https://github.com/opentensor/bittensor/pull/3090
-* Commenting on the test until the new governance come by @basfroman in https://github.com/opentensor/bittensor/pull/3101
-* Bumping scalecodec to 1.2.12 by @basfroman in https://github.com/opentensor/bittensor/pull/3104
+* [v10] Subtensor Pallet-Based GenericCall creation logic. by @basfroman in https://github.com/opentensor/bittensor/pull/3136
+* [v10] fix: simplify `AxonInfo.__eq__` method and add type check by @basfroman in https://github.com/opentensor/bittensor/pull/3142
+* [v10] Add Proxy Pallet Support by @basfroman in https://github.com/opentensor/bittensor/pull/3140
+* [v10] New logic + small refactoring by @basfroman in https://github.com/opentensor/bittensor/pull/3145
+* [v10] Improve btlogging by @basfroman in https://github.com/opentensor/bittensor/pull/3143
+* [v10] Improve proxy by @basfroman in https://github.com/opentensor/bittensor/pull/3147
+* [v10] Adds block backwards compatibility for fetching metagraph. by @thewhaleking in https://github.com/opentensor/bittensor/pull/3139
+* [v10] remove nest asyncio + loosen requirements by @thewhaleking in https://github.com/opentensor/bittensor/pull/3149
+* [v10] Add warning and protection to `create_pure_proxy_extrinsic` by @basfroman in https://github.com/opentensor/bittensor/pull/3150
+* [v10] Add `Async/Subtensor.get_stake_info_for_coldkeys` method by @basfroman in https://github.com/opentensor/bittensor/pull/3151
+* [v10] fix: resolve python 3.14 syntax warnings and update deps by @Arthurdw in https://github.com/opentensor/bittensor/pull/3155
 
-**Full Changelog**: https://github.com/opentensor/bittensor/compare/v9.12.0...v9.12.1
+**Full Changelog**: https://github.com/opentensor/bittensor/compare/v10.0.0rc3...v10.0.0rc4
+
+## 10.0.0rc3 /2025-11-05
+
+## What's Changed
+* [v10] Apply default era.period to all extrinsics by @basfroman in https://github.com/opentensor/bittensor/pull/3116
+* [V10] python3.14 by @thewhaleking in https://github.com/opentensor/bittensor/pull/3123
+* [v10] Fix py3.14 tests issue by @basfroman in https://github.com/opentensor/bittensor/pull/3124
+* [v10] `Root claim/ Airdrop` mechanism implementation by @basfroman in https://github.com/opentensor/bittensor/pull/3117
+* [v10] RootClaim fix by @basfroman in https://github.com/opentensor/bittensor/pull/3130
+* [v10] EMA InFlow support by @basfroman in https://github.com/opentensor/bittensor/pull/3131
+
+**Full Changelog**: https://github.com/opentensor/bittensor/compare/v10.0.0rc2...v10.0.0rc3
+
+## 10.0.0rc2 /2025-10-20
+
+* [v10] Remove deprecated `bittensor.version_split` by @basfroman in https://github.com/opentensor/bittensor/pull/3100
+* [v10] Fix `bittensor.core.types.Weights` type annotation by @basfroman in https://github.com/opentensor/bittensor/pull/3103
+* [v10] Integrate Crowdloan by @basfroman in https://github.com/opentensor/bittensor/pull/3098
+* [v10] Rename max_retries to max_attempts to be more obvious by @basfroman in https://github.com/opentensor/bittensor/pull/3108
+
+**Full Changelog**: https://github.com/opentensor/bittensor/compare/release/v10.0.0rc1...release/v10.0.0rc2
+
+## 10.0.0rc1 /2025-10-14
+
+## What's Changed
+* This release marks the first release candidate for Bittensor SDK v10.0.0, representing a major breaking revision of the Python SDK.
+* It includes a full refactor of the extrinsic layer, API standardization across Subtensor, and the introduction of multiple-mechanism (sub-subnet) support.
+* For a complete list of breaking changes and migration details, see the **MIGRATION_GUIDE.md** file in the repository.
+
+**Full Changelog**: https://github.com/opentensor/bittensor/compare/v9.12.0...SDKv10
 
 ## 9.12.0 /2025-10-08
 

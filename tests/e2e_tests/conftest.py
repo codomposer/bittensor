@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import os
 import re
 import shlex
@@ -7,11 +9,12 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Optional
 
 import pytest
-from async_substrate_interface import SubstrateInterface
+import pytest_asyncio
 
-from bittensor.core.subtensor_api import SubtensorApi
+from bittensor.extras import SubtensorApi
 from bittensor.utils.btlogging import logging
 from tests.e2e_tests.utils.e2e_test_utils import (
     Templates,
@@ -25,8 +28,11 @@ LOCALNET_IMAGE_NAME = (
 CONTAINER_NAME_PREFIX = "test_local_chain_"
 
 
-def wait_for_node_start(process, timestamp=None):
-    """Waits for node to start in the docker."""
+def wait_for_node_start(process, timestamp=None, timeout: Optional[int] = 120):
+    """Waits for node to start in the docker.
+
+    The `timeout` is set to 2 mins bc sometimes in GH the chain takes time after finalizing the first block.
+    """
     while True:
         line = process.stdout.readline()
         if not line:
@@ -34,8 +40,7 @@ def wait_for_node_start(process, timestamp=None):
 
         timestamp = timestamp or int(time.time())
         print(line.strip())
-        # 10 min as timeout
-        if int(time.time()) - timestamp > 20 * 30:
+        if int(time.time()) - timestamp > timeout:
             print("Subtensor not started in time")
             raise TimeoutError
 
@@ -62,7 +67,7 @@ def local_chain(request):
 
     # passed env variable to control node mod (non-/fast-blocks)
     fast_blocks = "False" if (os.getenv("FAST_BLOCKS") == "0") is True else "True"
-    params = f"{fast_blocks}" if args is None else f"{fast_blocks} {args} "
+    params = f"{fast_blocks}" if args is None else f"{args}"
 
     if shutil.which("docker") and not os.getenv("USE_DOCKER") == "0":
         yield from docker_runner(params)
@@ -110,12 +115,12 @@ def legacy_runner(params):
         text=True,
     ) as process:
         try:
-            wait_for_node_start(process)
+            wait_for_node_start(process, timeout=300)
         except TimeoutError:
             raise
         else:
-            with SubstrateInterface(url="ws://127.0.0.1:9944") as substrate:
-                yield substrate
+            yield
+
         finally:
             # Terminate the process group (includes all child processes)
             os.killpg(os.getpgid(process.pid), signal.SIGTERM)
@@ -130,6 +135,14 @@ def legacy_runner(params):
 
 def docker_runner(params):
     """Starts a Docker container before tests and gracefully terminates it after."""
+
+    def kill_local_nodes():
+        """Closes subtensor local running nodes."""
+        try:
+            subprocess.run(["pkill", "-9", "-f", "node-subtensor"], check=False)
+            print("Killed all local 'node-subtensor' processes.")
+        except Exception as e:
+            print(f"Warning: failed to kill local node-subtensor: {e}")
 
     def is_docker_running():
         """Check if Docker is running and optionally skip pulling the image."""
@@ -154,7 +167,7 @@ def docker_runner(params):
     def try_start_docker():
         """Run docker based on OS."""
         try:
-            subprocess.run(["open", "-a", "Docker"], check=True)  # macOS
+            subprocess.run(["open", "-g", "-a", "Docker"], check=True)  # macOS
         except (FileNotFoundError, subprocess.CalledProcessError):
             try:
                 subprocess.run(["systemctl", "start", "docker"], check=True)  # Linux
@@ -221,6 +234,8 @@ def docker_runner(params):
 
     print("Entire run command: ", cmds)
 
+    kill_local_nodes()
+
     try_start_docker()
 
     stop_existing_test_containers()
@@ -247,8 +262,7 @@ def docker_runner(params):
             if not result.stdout.strip():
                 raise RuntimeError("Docker container failed to start.")
 
-            with SubstrateInterface(url="ws://127.0.0.1:9944") as substrate:
-                yield substrate
+            yield
 
         finally:
             try:
@@ -266,41 +280,71 @@ def templates():
 
 @pytest.fixture
 def subtensor(local_chain):
-    return SubtensorApi(network="ws://localhost:9944", legacy_methods=True)
+    with SubtensorApi(network="ws://localhost:9944", legacy_methods=False) as sub:
+        yield sub
 
 
-@pytest.fixture
-def async_subtensor(local_chain):
-    return SubtensorApi(
-        network="ws://localhost:9944", legacy_methods=True, async_subtensor=True
-    )
+@pytest_asyncio.fixture
+async def async_subtensor(local_chain):
+    async with SubtensorApi(
+        network="ws://localhost:9944", legacy_methods=False, async_subtensor=True
+    ) as a_sub:
+        yield a_sub
 
 
 @pytest.fixture
 def alice_wallet():
-    keypair, wallet = setup_wallet("//Alice")
-    return wallet
+    return setup_wallet("//Alice")
 
 
 @pytest.fixture
 def bob_wallet():
-    keypair, wallet = setup_wallet("//Bob")
-    return wallet
+    return setup_wallet("//Bob")
 
 
 @pytest.fixture
 def charlie_wallet():
-    keypair, wallet = setup_wallet("//Charlie")
-    return wallet
+    return setup_wallet("//Charlie")
 
 
 @pytest.fixture
 def dave_wallet():
-    keypair, wallet = setup_wallet("//Dave")
-    return wallet
+    return setup_wallet("//Dave")
 
 
 @pytest.fixture
 def eve_wallet():
-    keypair, wallet = setup_wallet("//Eve")
-    return wallet
+    return setup_wallet("//Eve")
+
+
+@pytest.fixture
+def fred_wallet():
+    return setup_wallet("//Fred")
+
+
+@pytest.fixture(autouse=True)
+def log_test_start_and_end(request):
+    test_name = request.node.nodeid
+    logging.console.info(f"🏁[green]Testing[/green] [yellow]{test_name}[/yellow]")
+    yield
+    logging.console.success(f"✅ [green]Finished[/green] [yellow]{test_name}[/yellow]")
+
+
+@pytest_asyncio.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for each test case and close all alive tasks at the end."""
+    loop = asyncio.get_event_loop()
+    yield loop
+
+    # 1) cance all alive tasks
+    pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+    for t in pending:
+        t.cancel()
+    with contextlib.suppress(Exception):
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+    # 2) cleanup async generators
+    with contextlib.suppress(Exception):
+        loop.run_until_complete(loop.shutdown_asyncgens())
+
+    loop.close()

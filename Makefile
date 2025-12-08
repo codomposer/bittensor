@@ -27,12 +27,12 @@ reinstall: clean clean-venv install
 reinstall-dev: clean clean-venv install-dev
 
 ruff:
-	@python -m ruff format bittensor
+	@python -m ruff format .
 
 check: ruff
-	@mypy --ignore-missing-imports bittensor/ --python-version=3.9
 	@mypy --ignore-missing-imports bittensor/ --python-version=3.10
 	@mypy --ignore-missing-imports bittensor/ --python-version=3.11
 	@mypy --ignore-missing-imports bittensor/ --python-version=3.12
 	@mypy --ignore-missing-imports bittensor/ --python-version=3.13
+	@mypy --ignore-missing-imports bittensor/ --python-version=3.14
 	@flake8 bittensor/ --count

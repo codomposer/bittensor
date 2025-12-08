@@ -1,10 +1,13 @@
 import pytest
+
 from bittensor.core.axon import Axon
-from bittensor.utils.btlogging import logging
+from tests.e2e_tests.utils import (
+    TestSubnet,
+    REGISTER_SUBNET,
+)
 
 
-@pytest.mark.asyncio
-async def test_neuron_certificate(subtensor, alice_wallet):
+def test_neuron_certificate(subtensor, alice_wallet):
     """
     Tests the metagraph
 
@@ -15,26 +18,28 @@ async def test_neuron_certificate(subtensor, alice_wallet):
     Raises:
         AssertionError: If any of the checks or verifications fail
     """
-    logging.info("Testing neuron_certificate")
-    netuid = 2
+    alice_sn = TestSubnet(subtensor)
+    alice_sn.execute_one(REGISTER_SUBNET(alice_wallet))
 
     # Register root as Alice - the subnet owner and validator
-    assert subtensor.register_subnet(alice_wallet)
+    assert subtensor.subnets.register_subnet(alice_wallet)
 
     # Verify subnet <netuid> created successfully
-    assert subtensor.subnet_exists(netuid), "Subnet wasn't created successfully"
+    assert subtensor.subnets.subnet_exists(alice_sn.netuid), (
+        "Subnet wasn't created successfully"
+    )
 
     # Register Alice as a neuron on the subnet
-    assert subtensor.burned_register(alice_wallet, netuid), (
+    assert subtensor.subnets.burned_register(alice_wallet, alice_sn.netuid).success, (
         "Unable to register Alice as a neuron"
     )
 
     # Serve Alice's axon with a certificate
     axon = Axon(wallet=alice_wallet)
     encoded_certificate = "?FAKE_ALICE_CERT"
-    subtensor.serve_axon(
-        netuid,
-        axon,
+    subtensor.extrinsics.serve_axon(
+        netuid=alice_sn.netuid,
+        axon=axon,
         certificate=encoded_certificate,
         wait_for_inclusion=True,
         wait_for_finalization=True,
@@ -42,14 +47,68 @@ async def test_neuron_certificate(subtensor, alice_wallet):
 
     # Verify we are getting the correct certificate
     assert (
-        subtensor.get_neuron_certificate(
-            netuid=netuid,
-            hotkey=alice_wallet.hotkey.ss58_address,
+        subtensor.neurons.get_neuron_certificate(
+            netuid=alice_sn.netuid,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
         )
         == encoded_certificate
     )
-    all_certs_query = subtensor.get_all_neuron_certificates(netuid=netuid)
+    all_certs_query = subtensor.neurons.get_all_neuron_certificates(
+        netuid=alice_sn.netuid
+    )
     assert alice_wallet.hotkey.ss58_address in all_certs_query.keys()
     assert all_certs_query[alice_wallet.hotkey.ss58_address] == encoded_certificate
 
-    logging.info("✅ Passed test_neuron_certificate")
+
+@pytest.mark.asyncio
+async def test_neuron_certificate_async(async_subtensor, alice_wallet):
+    """
+    ASync tests the metagraph
+
+    Steps:
+        1. Register a subnet through Alice
+        2. Serve Alice axon with neuron certificate
+        3. Verify neuron certificate can be retrieved
+    Raises:
+        AssertionError: If any of the checks or verifications fail
+    """
+    alice_sn = TestSubnet(async_subtensor)
+    await alice_sn.async_execute_one(REGISTER_SUBNET(alice_wallet))
+
+    # Register root as Alice - the subnet owner and validator
+    assert await async_subtensor.subnets.register_subnet(alice_wallet)
+
+    # Verify subnet <netuid> created successfully
+    assert await async_subtensor.subnets.subnet_exists(alice_sn.netuid), (
+        "Subnet wasn't created successfully"
+    )
+
+    # Register Alice as a neuron on the subnet
+    assert (
+        await async_subtensor.subnets.burned_register(alice_wallet, alice_sn.netuid)
+    ).success, "Unable to register Alice as a neuron"
+
+    # Serve Alice's axon with a certificate
+    axon = Axon(wallet=alice_wallet)
+    encoded_certificate = "?FAKE_ALICE_CERT"
+    await async_subtensor.extrinsics.serve_axon(
+        netuid=alice_sn.netuid,
+        axon=axon,
+        certificate=encoded_certificate,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+    )
+
+    # Verify we are getting the correct certificate
+    assert (
+        await async_subtensor.neurons.get_neuron_certificate(
+            netuid=alice_sn.netuid,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        )
+        == encoded_certificate
+    )
+    all_certs_query = await async_subtensor.neurons.get_all_neuron_certificates(
+        netuid=alice_sn.netuid
+    )
+    assert alice_wallet.hotkey.ss58_address in all_certs_query.keys()
+    assert all_certs_query[alice_wallet.hotkey.ss58_address] == encoded_certificate

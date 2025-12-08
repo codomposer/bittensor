@@ -1,5 +1,6 @@
 import asyncio
 import copy
+from bittensor.utils.btlogging import logging
 from bittensor.utils.balance import Balance
 from unittest.mock import Mock
 
@@ -96,7 +97,6 @@ def test_process_weights_or_bonds(mock_environment):
     assert weights.shape[1] == len(
         neurons
     )  # Number of columns should be equal to number of neurons
-    # TODO: Add more checks to ensure the weights have been processed correctly
 
     # Test bonds processing
     bonds = metagraph._process_weights_or_bonds(
@@ -108,8 +108,6 @@ def test_process_weights_or_bonds(mock_environment):
     assert bonds.shape[1] == len(
         neurons
     )  # Number of columns should be equal to number of neurons
-
-    # TODO: Add more checks to ensure the bonds have been processed correctly
 
 
 # Mocking the bittensor.Subtensor class for testing purposes
@@ -159,10 +157,11 @@ def loguru_sink():
     ],
 )
 def test_sync_warning_cases(block, test_id, metagraph_instance, mock_subtensor, caplog):
+    """Makes sure that the warning message is logged when the block is greater than 300 with debug level."""
+    logging.set_debug()
     mock_subtensor.get_current_block.return_value = 601
     mock_subtensor.get_metagraph_info.return_value = []
     metagraph_instance.sync(block=block, lite=True, subtensor=mock_subtensor)
-
     expected_message = "Attempting to sync longer than 300 blocks ago on a non-archive node. Please use the 'archive' network for subtensor and retry."
     assert expected_message in caplog.text, (
         f"Test ID: {test_id} - Expected warning message not found in Loguru sink."

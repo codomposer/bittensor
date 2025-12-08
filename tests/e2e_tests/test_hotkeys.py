@@ -5,21 +5,30 @@ from bittensor.core.errors import (
     RegistrationNotPermittedOnRootSubnet,
     SubnetNotExists,
     InvalidChild,
-    TooManyChildren,
     ProportionOverflow,
     DuplicateChild,
     TxRateLimitExceeded,
     NonAssociatedColdKey,
 )
-from bittensor.core.extrinsics.sudo import (
-    sudo_set_admin_freeze_window_extrinsic,
-)
 from bittensor.utils.btlogging import logging
-from tests.e2e_tests.utils.chain_interactions import sudo_set_admin_utils
-from tests.e2e_tests.utils.e2e_test_utils import wait_to_start_call
+from tests.e2e_tests.utils import (
+    TestSubnet,
+    AdminUtils,
+    NETUID,
+    ACTIVATE_SUBNET,
+    REGISTER_NEURON,
+    REGISTER_SUBNET,
+    SUDO_SET_ADMIN_FREEZE_WINDOW,
+    SUDO_SET_TEMPO,
+    SUDO_SET_TX_RATE_LIMIT,
+    SUDO_SET_STAKE_THRESHOLD,
+)
 
-SET_CHILDREN_RATE_LIMIT = 15
-ROOT_COOLDOWN = 15  # blocks
+# all values are in blocks
+SET_CHILDREN_RATE_LIMIT = 50
+ROOT_COOLDOWN = 30
+FAST_RUNTIME_TEMPO = 100
+NON_FAST_RUNTIME_TEMPO = 10
 
 
 def test_hotkeys(subtensor, alice_wallet, dave_wallet):
@@ -28,55 +37,108 @@ def test_hotkeys(subtensor, alice_wallet, dave_wallet):
     - Check if Hotkey exists
     - Check if Hotkey is registered
     """
-    dave_subnet_netuid = subtensor.get_total_subnets()  # 2
-    assert subtensor.register_subnet(dave_wallet, True, True)
-    assert subtensor.subnet_exists(dave_subnet_netuid), (
-        f"Subnet #{dave_subnet_netuid} does not exist."
+    dave_sn = TestSubnet(subtensor)
+    dave_sn.execute_steps(
+        [
+            REGISTER_SUBNET(dave_wallet),
+            ACTIVATE_SUBNET(dave_wallet),
+        ]
     )
-
-    assert wait_to_start_call(subtensor, dave_wallet, dave_subnet_netuid)
 
     coldkey = alice_wallet.coldkeypub.ss58_address
     hotkey = alice_wallet.hotkey.ss58_address
 
     with pytest.raises(ValueError, match="Invalid checksum"):
-        subtensor.does_hotkey_exist("fake")
+        subtensor.wallets.does_hotkey_exist("fake")
 
-    assert subtensor.does_hotkey_exist(hotkey) is False
-    assert subtensor.get_hotkey_owner(hotkey) is None
+    assert subtensor.wallets.does_hotkey_exist(hotkey) is False
+    assert subtensor.wallets.get_hotkey_owner(hotkey) is None
 
-    assert subtensor.is_hotkey_registered(hotkey) is False
-    assert subtensor.is_hotkey_registered_any(hotkey) is False
+    assert subtensor.wallets.is_hotkey_registered(hotkey) is False
+    assert subtensor.wallets.is_hotkey_registered_any(hotkey) is False
     assert (
-        subtensor.is_hotkey_registered_on_subnet(
-            hotkey,
-            netuid=dave_subnet_netuid,
+        subtensor.wallets.is_hotkey_registered_on_subnet(
+            hotkey_ss58=hotkey,
+            netuid=dave_sn.netuid,
         )
         is False
     )
 
-    subtensor.burned_register(
-        alice_wallet,
-        netuid=dave_subnet_netuid,
-    )
+    assert subtensor.subnets.burned_register(
+        wallet=alice_wallet,
+        netuid=dave_sn.netuid,
+    ).success
 
-    assert subtensor.does_hotkey_exist(hotkey) is True
-    assert subtensor.get_hotkey_owner(hotkey) == coldkey
+    assert subtensor.wallets.does_hotkey_exist(hotkey) is True
+    assert subtensor.wallets.get_hotkey_owner(hotkey) == coldkey
 
-    assert subtensor.is_hotkey_registered(hotkey) is True
-    assert subtensor.is_hotkey_registered_any(hotkey) is True
+    assert subtensor.wallets.is_hotkey_registered(hotkey) is True
+    assert subtensor.wallets.is_hotkey_registered_any(hotkey) is True
     assert (
-        subtensor.is_hotkey_registered_on_subnet(
-            hotkey,
-            netuid=dave_subnet_netuid,
+        subtensor.wallets.is_hotkey_registered_on_subnet(
+            hotkey_ss58=hotkey,
+            netuid=dave_sn.netuid,
         )
         is True
     )
-    logging.console.success("✅ Test [green]test_hotkeys[/green] passed")
 
 
 @pytest.mark.asyncio
-async def test_children(local_chain, subtensor, alice_wallet, bob_wallet, dave_wallet):
+async def test_hotkeys_async(async_subtensor, alice_wallet, dave_wallet):
+    """
+    Async tests:
+    - Check if Hotkey exists
+    - Check if Hotkey is registered
+    """
+    dave_sn = TestSubnet(async_subtensor)
+    await dave_sn.async_execute_steps(
+        [
+            REGISTER_SUBNET(dave_wallet),
+            ACTIVATE_SUBNET(dave_wallet),
+        ]
+    )
+
+    coldkey = alice_wallet.coldkeypub.ss58_address
+    hotkey = alice_wallet.hotkey.ss58_address
+
+    with pytest.raises(ValueError, match="Invalid checksum"):
+        await async_subtensor.wallets.does_hotkey_exist("fake")
+
+    assert await async_subtensor.wallets.does_hotkey_exist(hotkey) is False
+    assert await async_subtensor.wallets.get_hotkey_owner(hotkey) is None
+
+    assert await async_subtensor.wallets.is_hotkey_registered(hotkey) is False
+    assert await async_subtensor.wallets.is_hotkey_registered_any(hotkey) is False
+    assert (
+        await async_subtensor.wallets.is_hotkey_registered_on_subnet(
+            hotkey_ss58=hotkey,
+            netuid=dave_sn.netuid,
+        )
+        is False
+    )
+
+    assert (
+        await async_subtensor.subnets.burned_register(
+            wallet=alice_wallet,
+            netuid=dave_sn.netuid,
+        )
+    ).success
+
+    assert await async_subtensor.wallets.does_hotkey_exist(hotkey) is True
+    assert await async_subtensor.wallets.get_hotkey_owner(hotkey) == coldkey
+
+    assert await async_subtensor.wallets.is_hotkey_registered(hotkey) is True
+    assert await async_subtensor.wallets.is_hotkey_registered_any(hotkey) is True
+    assert (
+        await async_subtensor.wallets.is_hotkey_registered_on_subnet(
+            hotkey_ss58=hotkey,
+            netuid=dave_sn.netuid,
+        )
+        is True
+    )
+
+
+def test_children(subtensor, alice_wallet, bob_wallet, dave_wallet):
     """
     Tests:
     - Get default children (empty list)
@@ -87,93 +149,62 @@ async def test_children(local_chain, subtensor, alice_wallet, bob_wallet, dave_w
     - Trigger rate limit
     - Clear children list
     """
-
-    # turn off admin freeze window limit for testing
-    assert sudo_set_admin_freeze_window_extrinsic(subtensor, alice_wallet, 0)
-
-    dave_subnet_netuid = subtensor.get_total_subnets()  # 2
-    set_tempo = 10  # affect to non-fast-blocks mode
-
-    # Set cooldown
-    success, message = subtensor.extrinsics.root_set_pending_childkey_cooldown(
-        wallet=alice_wallet, cooldown=ROOT_COOLDOWN
-    )
-    assert success, f"Call `root_set_pending_childkey_cooldown` failed: {message}"
-    assert (
-        message
-        == "Success with `root_set_pending_childkey_cooldown_extrinsic` response."
+    TEMPO_TO_SET = (
+        FAST_RUNTIME_TEMPO
+        if subtensor.chain.is_fast_blocks()
+        else NON_FAST_RUNTIME_TEMPO
     )
 
-    assert subtensor.register_subnet(dave_wallet, True, True)
-    assert subtensor.subnet_exists(dave_subnet_netuid), (
-        f"Subnet #{dave_subnet_netuid} does not exist."
-    )
+    # set PendingChildKeyCooldown to SET_CHILDREN_RATE_LIMIT before everything
+    subtensor.extrinsics.root_set_pending_childkey_cooldown(alice_wallet, ROOT_COOLDOWN)
 
-    assert wait_to_start_call(subtensor, dave_wallet, dave_subnet_netuid)
-
-    # set the same tempo for both type of nodes (to avoid tests timeout)
-    if not subtensor.is_fast_blocks():
-        assert (
-            sudo_set_admin_utils(
-                local_chain,
-                alice_wallet,
-                call_function="sudo_set_tempo",
-                call_params={"netuid": dave_subnet_netuid, "tempo": set_tempo},
-            )[0]
-            is True
-        )
-
-        assert (
-            sudo_set_admin_utils(
-                local_chain,
-                alice_wallet,
-                call_function="sudo_set_tx_rate_limit",
-                call_params={"tx_rate_limit": 0},
-            )[0]
-            is True
-        )
+    dave_sn = TestSubnet(subtensor)
+    steps = [
+        SUDO_SET_ADMIN_FREEZE_WINDOW(alice_wallet, AdminUtils, True, 0),
+        REGISTER_SUBNET(dave_wallet),
+        ACTIVATE_SUBNET(dave_wallet),
+        SUDO_SET_TEMPO(alice_wallet, AdminUtils, True, NETUID, TEMPO_TO_SET),
+        SUDO_SET_TX_RATE_LIMIT(alice_wallet, AdminUtils, True, 0),
+    ]
+    dave_sn.execute_steps(steps)
 
     with pytest.raises(RegistrationNotPermittedOnRootSubnet):
-        subtensor.set_children(
-            alice_wallet,
-            alice_wallet.hotkey.ss58_address,
+        subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
             netuid=0,
             children=[],
             raise_error=True,
         )
 
     with pytest.raises(NonAssociatedColdKey):
-        subtensor.set_children(
-            alice_wallet,
-            alice_wallet.hotkey.ss58_address,
+        subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
             netuid=1,
             children=[],
             raise_error=True,
         )
 
     with pytest.raises(SubnetNotExists):
-        subtensor.set_children(
-            alice_wallet,
-            alice_wallet.hotkey.ss58_address,
+        subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
             netuid=3,
             children=[],
             raise_error=True,
         )
 
-    subtensor.burned_register(
-        alice_wallet,
-        netuid=dave_subnet_netuid,
+    dave_sn.execute_steps(
+        [
+            REGISTER_NEURON(alice_wallet),
+            REGISTER_NEURON(bob_wallet),
+        ]
     )
-    logging.console.success(f"Alice registered on subnet {dave_subnet_netuid}")
-    subtensor.burned_register(
-        bob_wallet,
-        netuid=dave_subnet_netuid,
-    )
-    logging.console.success(f"Bob registered on subnet {dave_subnet_netuid}")
 
-    success, children, error = subtensor.get_children(
-        alice_wallet.hotkey.ss58_address,
-        netuid=dave_subnet_netuid,
+    success, children, error = subtensor.wallets.get_children(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
     )
 
     assert error == ""
@@ -181,10 +212,10 @@ async def test_children(local_chain, subtensor, alice_wallet, bob_wallet, dave_w
     assert children == []
 
     with pytest.raises(InvalidChild):
-        subtensor.set_children(
-            alice_wallet,
-            alice_wallet.hotkey.ss58_address,
-            netuid=dave_subnet_netuid,
+        subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
             children=[
                 (
                     1.0,
@@ -195,10 +226,10 @@ async def test_children(local_chain, subtensor, alice_wallet, bob_wallet, dave_w
         )
 
     with pytest.raises(DuplicateChild):
-        subtensor.set_children(
-            alice_wallet,
-            alice_wallet.hotkey.ss58_address,
-            netuid=dave_subnet_netuid,
+        subtensor.wallets.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
             children=[
                 (
                     0.1,
@@ -210,10 +241,10 @@ async def test_children(local_chain, subtensor, alice_wallet, bob_wallet, dave_w
         )
 
     with pytest.raises(ProportionOverflow):
-        subtensor.set_children(
-            alice_wallet,
-            alice_wallet.hotkey.ss58_address,
-            netuid=dave_subnet_netuid,
+        subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
             children=[
                 (
                     1.0,
@@ -228,10 +259,10 @@ async def test_children(local_chain, subtensor, alice_wallet, bob_wallet, dave_w
         )
 
     with pytest.raises(DuplicateChild):
-        subtensor.set_children(
-            alice_wallet,
-            alice_wallet.hotkey.ss58_address,
-            netuid=dave_subnet_netuid,
+        subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
             children=[
                 (
                     0.5,
@@ -245,10 +276,10 @@ async def test_children(local_chain, subtensor, alice_wallet, bob_wallet, dave_w
             raise_error=True,
         )
 
-    success, error = subtensor.set_children(
+    success, message = subtensor.extrinsics.set_children(
         wallet=alice_wallet,
-        hotkey=alice_wallet.hotkey.ss58_address,
-        netuid=dave_subnet_netuid,
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
         children=[
             (
                 1.0,
@@ -256,68 +287,84 @@ async def test_children(local_chain, subtensor, alice_wallet, bob_wallet, dave_w
             ),
         ],
         raise_error=True,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
     )
-
-    assert error == "Success with `set_children_extrinsic` response."
-    assert success is True
-
-    set_children_block = subtensor.get_current_block()
+    assert success is True, message
+    assert message == "Success"
 
     # children not set yet (have to wait cool-down period)
-    success, children, error = subtensor.get_children(
-        hotkey=alice_wallet.hotkey.ss58_address,
-        block=set_children_block,
-        netuid=dave_subnet_netuid,
+    success, children, error = subtensor.wallets.get_children(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
     )
-
     assert success is True
     assert children == []
     assert error == ""
 
     # children are in pending state
-    pending, cooldown = subtensor.get_children_pending(
-        hotkey=alice_wallet.hotkey.ss58_address,
-        netuid=dave_subnet_netuid,
+    pending, cooldown = subtensor.wallets.get_children_pending(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
     )
-
     assert pending == [(1.0, bob_wallet.hotkey.ss58_address)]
 
-    # we use `*2` to ensure that the chain has time to process
-    subtensor.wait_for_block(cooldown + SET_CHILDREN_RATE_LIMIT * 2)
-
-    success, children, error = subtensor.get_children(
-        hotkey=alice_wallet.hotkey.ss58_address,
-        netuid=dave_subnet_netuid,
+    # Wait for first block of the next tempo after the cooldown's tempo
+    block = subtensor.block
+    extra_blocks = block // TEMPO_TO_SET * 3
+    wait_to_block = (
+        cooldown
+        - subtensor.subnets.blocks_since_last_step(cooldown)
+        + TEMPO_TO_SET
+        + extra_blocks
     )
+    logging.console.info(
+        f"[orange]block: {block}, cooldown: {cooldown} wait_to_block: {wait_to_block}[/orange]"
+    )
+    subtensor.wait_for_block(wait_to_block)
+
+    success, children, error = subtensor.wallets.get_children(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
+    )
+    logging.console.info(f"[orange]block get_children: {subtensor.block}")
 
     assert error == ""
     assert success is True
     assert children == [(1.0, bob_wallet.hotkey.ss58_address)]
 
-    parent_ = subtensor.get_parents(bob_wallet.hotkey.ss58_address, dave_subnet_netuid)
+    parent_ = subtensor.wallets.get_parents(
+        bob_wallet.hotkey.ss58_address, dave_sn.netuid
+    )
 
     assert parent_ == [(1.0, alice_wallet.hotkey.ss58_address)]
 
     # pending queue is empty
-    pending, cooldown = subtensor.get_children_pending(
-        hotkey=alice_wallet.hotkey.ss58_address,
-        netuid=dave_subnet_netuid,
+    pending, cooldown = subtensor.wallets.get_children_pending(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
     )
     assert pending == []
+    logging.console.info(
+        f"[orange]block get_children_pending: {subtensor.block}, cooldown: {cooldown}[/orange]"
+    )
 
     with pytest.raises(TxRateLimitExceeded):
-        set_children_block = subtensor.get_current_block()
-        subtensor.set_children(
+        set_children_block = subtensor.block
+        # first passed
+        assert subtensor.extrinsics.set_children(
             wallet=alice_wallet,
-            hotkey=alice_wallet.hotkey.ss58_address,
-            netuid=dave_subnet_netuid,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
             children=[],
             raise_error=True,
-        )
-        subtensor.set_children(
+        ).success
+
+        # second raise the error
+        subtensor.extrinsics.set_children(
             wallet=alice_wallet,
-            hotkey=alice_wallet.hotkey.ss58_address,
-            netuid=dave_subnet_netuid,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
             children=[],
             raise_error=True,
         )
@@ -325,49 +372,66 @@ async def test_children(local_chain, subtensor, alice_wallet, bob_wallet, dave_w
     # wait for rate limit to expire + 1 block to ensure that the rate limit is expired
     subtensor.wait_for_block(set_children_block + SET_CHILDREN_RATE_LIMIT + 1)
 
-    subtensor.set_children(
+    response = subtensor.extrinsics.set_children(
         wallet=alice_wallet,
-        hotkey=alice_wallet.hotkey.ss58_address,
-        netuid=dave_subnet_netuid,
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
         children=[],
         raise_error=True,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
     )
-    set_children_block = subtensor.get_current_block()
+    assert response.success, response.message
 
-    pending, cooldown = subtensor.get_children_pending(
-        hotkey=alice_wallet.hotkey.ss58_address,
-        netuid=dave_subnet_netuid,
+    pending, cooldown = subtensor.wallets.get_children_pending(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
     )
-
     assert pending == []
 
-    subtensor.wait_for_block(cooldown + 1)
-
-    success, children, error = subtensor.get_children(
-        hotkey=alice_wallet.hotkey.ss58_address,
-        netuid=dave_subnet_netuid,
+    # sometimes we need to wait some amount of blocks to ensure that children are posted on chain
+    # than slower the machine then longer need to wait. But no longer than one tempo.
+    # Actually this is additional protection for fast runtime note test.
+    block = subtensor.block
+    extra_blocks = block // TEMPO_TO_SET * 3
+    wait_to_block = (
+        cooldown
+        - subtensor.subnets.blocks_since_last_step(cooldown)
+        + TEMPO_TO_SET
+        + extra_blocks
     )
+    logging.console.info(
+        f"[orange]block: {block}, cooldown: {cooldown} wait_to_block: {wait_to_block}[/orange]"
+    )
+    subtensor.wait_for_block(wait_to_block)
+
+    start_block = subtensor.block
+    while not children:
+        success, children, error = subtensor.wallets.get_children(
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
+        )
+        block = subtensor.block
+        if block - start_block > TEMPO_TO_SET:
+            break
+        logging.console.info(f"block get_children: {subtensor.block}")
+        subtensor.wait_for_block()
 
     assert error == ""
     assert success is True
     assert children == [(1.0, bob_wallet.hotkey.ss58_address)]
 
-    subtensor.wait_for_block(set_children_block + SET_CHILDREN_RATE_LIMIT)
+    subtensor.wait_for_block(set_children_block + SET_CHILDREN_RATE_LIMIT + 1)
 
-    sudo_set_admin_utils(
-        local_chain,
-        alice_wallet,
-        call_function="sudo_set_stake_threshold",
-        call_params={
-            "min_stake": 1_000_000_000_000,
-        },
+    dave_sn.execute_one(
+        SUDO_SET_STAKE_THRESHOLD(alice_wallet, AdminUtils, True, 1_000_000_000_000)
     )
 
     with pytest.raises(NotEnoughStakeToSetChildkeys):
-        subtensor.set_children(
-            alice_wallet,
-            alice_wallet.hotkey.ss58_address,
-            netuid=dave_subnet_netuid,
+        subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
             children=[
                 (
                     1.0,
@@ -377,4 +441,313 @@ async def test_children(local_chain, subtensor, alice_wallet, bob_wallet, dave_w
             raise_error=True,
         )
 
-    logging.console.success(f"✅ Test [green]test_children[/green] passed")
+
+@pytest.mark.asyncio
+async def test_children_async(async_subtensor, alice_wallet, bob_wallet, dave_wallet):
+    """
+    Tests:
+    - Get default children (empty list)
+    - Call `root_set_pending_childkey_cooldown` extrinsic.
+    - Update children list
+    - Checking pending children
+    - Checking cooldown period
+    - Trigger rate limit
+    - Clear children list
+    """
+    TEMPO_TO_SET = (
+        FAST_RUNTIME_TEMPO
+        if await async_subtensor.chain.is_fast_blocks()
+        else NON_FAST_RUNTIME_TEMPO
+    )
+
+    # set PendingChildKeyCooldown to SET_CHILDREN_RATE_LIMIT before everything
+    await async_subtensor.extrinsics.root_set_pending_childkey_cooldown(
+        alice_wallet, ROOT_COOLDOWN
+    )
+
+    dave_sn = TestSubnet(async_subtensor)
+    steps = [
+        SUDO_SET_ADMIN_FREEZE_WINDOW(alice_wallet, AdminUtils, True, 0),
+        REGISTER_SUBNET(dave_wallet),
+        ACTIVATE_SUBNET(dave_wallet),
+        SUDO_SET_TEMPO(alice_wallet, AdminUtils, True, NETUID, TEMPO_TO_SET),
+        SUDO_SET_TX_RATE_LIMIT(alice_wallet, AdminUtils, True, 0),
+    ]
+    await dave_sn.async_execute_steps(steps)
+
+    with pytest.raises(RegistrationNotPermittedOnRootSubnet):
+        await async_subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=0,
+            children=[],
+            raise_error=True,
+        )
+
+    with pytest.raises(NonAssociatedColdKey):
+        await async_subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=1,
+            children=[],
+            raise_error=True,
+        )
+
+    with pytest.raises(SubnetNotExists):
+        await async_subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=3,
+            children=[],
+            raise_error=True,
+        )
+
+    await dave_sn.async_execute_steps(
+        [
+            REGISTER_NEURON(alice_wallet),
+            REGISTER_NEURON(bob_wallet),
+        ]
+    )
+
+    success, children, error = await async_subtensor.wallets.get_children(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
+    )
+    assert error == ""
+    assert success is True
+    assert children == []
+
+    with pytest.raises(InvalidChild):
+        await async_subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
+            children=[
+                (
+                    1.0,
+                    alice_wallet.hotkey.ss58_address,
+                ),
+            ],
+            raise_error=True,
+        )
+
+    with pytest.raises(DuplicateChild):
+        await async_subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
+            children=[
+                (
+                    0.1,
+                    bob_wallet.hotkey.ss58_address,
+                )
+                for _ in range(10)
+            ],
+            raise_error=True,
+        )
+
+    with pytest.raises(ProportionOverflow):
+        await async_subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
+            children=[
+                (
+                    1.0,
+                    bob_wallet.hotkey.ss58_address,
+                ),
+                (
+                    1.0,
+                    "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+                ),
+            ],
+            raise_error=True,
+        )
+
+    with pytest.raises(DuplicateChild):
+        await async_subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
+            children=[
+                (
+                    0.5,
+                    bob_wallet.hotkey.ss58_address,
+                ),
+                (
+                    0.5,
+                    bob_wallet.hotkey.ss58_address,
+                ),
+            ],
+            raise_error=True,
+        )
+
+    success, message = await async_subtensor.extrinsics.set_children(
+        wallet=alice_wallet,
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
+        children=[
+            (
+                1.0,
+                bob_wallet.hotkey.ss58_address,
+            ),
+        ],
+        raise_error=True,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+    )
+    assert success is True, message
+    assert message == "Success"
+
+    # children not set yet (have to wait cool-down period)
+    success, children, error = await async_subtensor.wallets.get_children(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
+    )
+    assert success is True
+    assert children == []
+    assert error == ""
+
+    # children are in pending state
+    pending, cooldown = await async_subtensor.wallets.get_children_pending(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
+    )
+    assert pending == [(1.0, bob_wallet.hotkey.ss58_address)]
+
+    # Wait for first block of the next tempo after the cooldown's tempo
+    block = await async_subtensor.block
+    extra_blocks = block // TEMPO_TO_SET * 3
+    wait_to_block = (
+        cooldown
+        - await async_subtensor.subnets.blocks_since_last_step(cooldown)
+        + TEMPO_TO_SET
+        + extra_blocks
+    )
+    logging.console.info(
+        f"[orange]block: {block}, cooldown: {cooldown} wait_to_block: {wait_to_block}[/orange]"
+    )
+    await async_subtensor.wait_for_block(wait_to_block)
+
+    success, children, error = await async_subtensor.wallets.get_children(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
+    )
+    logging.console.info(f"[orange]block get_children: {await async_subtensor.block}")
+
+    assert error == ""
+    assert success is True
+    assert children == [(1.0, bob_wallet.hotkey.ss58_address)]
+
+    parent_ = await async_subtensor.wallets.get_parents(
+        bob_wallet.hotkey.ss58_address, dave_sn.netuid
+    )
+
+    assert parent_ == [(1.0, alice_wallet.hotkey.ss58_address)]
+
+    # pending queue is empty
+    pending, cooldown = await async_subtensor.wallets.get_children_pending(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
+    )
+    assert pending == []
+    logging.console.info(
+        f"[orange]block get_children_pending: {await async_subtensor.block}, cooldown: {cooldown}[/orange]"
+    )
+
+    with pytest.raises(TxRateLimitExceeded):
+        set_children_block = await async_subtensor.block
+        # first passed
+        await async_subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
+            children=[],
+            raise_error=True,
+            wait_for_finalization=False,
+        )
+        # second raise the error
+        await async_subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
+            children=[],
+            raise_error=True,
+            wait_for_finalization=False,
+        )
+
+    # wait for rate limit to expire + 1 block to ensure that the rate limit is expired
+    await async_subtensor.wait_for_block(
+        set_children_block + SET_CHILDREN_RATE_LIMIT + 1
+    )
+
+    response = await async_subtensor.extrinsics.set_children(
+        wallet=alice_wallet,
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
+        children=[],
+        raise_error=True,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+    )
+    assert response.success, response.message
+
+    pending, cooldown = await async_subtensor.wallets.get_children_pending(
+        hotkey_ss58=alice_wallet.hotkey.ss58_address,
+        netuid=dave_sn.netuid,
+    )
+    assert pending == []
+
+    # sometimes we need to wait some amount of blocks to ensure that children are posted on chain
+    # than slower the machine then longer need to wait. But no longer than one tempo.
+    # Actually this is additional protection for fast runtime note test.
+    block = await async_subtensor.block
+    extra_blocks = block // TEMPO_TO_SET * 3
+    wait_to_block = (
+        cooldown
+        - await async_subtensor.subnets.blocks_since_last_step(cooldown)
+        + TEMPO_TO_SET
+        + extra_blocks
+    )
+    logging.console.info(
+        f"[orange]block: {block}, cooldown: {cooldown} wait_to_block: {wait_to_block}[/orange]"
+    )
+    await async_subtensor.wait_for_block(wait_to_block)
+
+    start_block = await async_subtensor.block
+    while not children:
+        success, children, error = await async_subtensor.wallets.get_children(
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
+        )
+        block = await async_subtensor.block
+        if block - start_block > TEMPO_TO_SET:
+            break
+        logging.console.info(f"block get_children: {block}")
+        await async_subtensor.wait_for_block()
+
+    assert error == ""
+    assert success is True
+    assert children == [(1.0, bob_wallet.hotkey.ss58_address)]
+
+    await async_subtensor.wait_for_block(
+        set_children_block + SET_CHILDREN_RATE_LIMIT + 1
+    )
+
+    await dave_sn.async_execute_one(
+        SUDO_SET_STAKE_THRESHOLD(alice_wallet, AdminUtils, True, 1_000_000_000_000)
+    )
+
+    with pytest.raises(NotEnoughStakeToSetChildkeys):
+        await async_subtensor.extrinsics.set_children(
+            wallet=alice_wallet,
+            hotkey_ss58=alice_wallet.hotkey.ss58_address,
+            netuid=dave_sn.netuid,
+            children=[
+                (
+                    1.0,
+                    bob_wallet.hotkey.ss58_address,
+                ),
+            ],
+            raise_error=True,
+        )

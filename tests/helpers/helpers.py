@@ -14,7 +14,6 @@ from websockets.asyncio.client import ClientConnection, ClientProtocol
 from websockets.uri import parse_uri
 
 from bittensor.core.chain_data import AxonInfo, NeuronInfo, PrometheusInfo
-from bittensor.core.subtensor import DEFAULT_PERIOD
 from bittensor.utils.balance import Balance
 from tests.helpers.integration_websocket_data import WEBSOCKET_RESPONSES
 
@@ -58,7 +57,7 @@ class CloseInValue:
         return f"CloseInValue<value: {self.value}, tolerance: {self.tolerance}>"
 
     def __repr__(self) -> str:
-        return self.__str__()
+        return repr([self.value - self.tolerance, self.value + self.tolerance])
 
 
 class ApproxBalance(CloseInValue, Balance):
@@ -85,10 +84,10 @@ def assert_submit_signed_extrinsic(
     call_params: Optional[dict] = None,
     era: Optional[dict] = None,
     nonce: Optional[int] = None,
-    wait_for_inclusion: bool = False,
+    wait_for_inclusion: bool = True,
     wait_for_finalization: bool = True,
 ):
-    substrate.compose_call.assert_called_with(
+    substrate.assert_called_with(
         call_module,
         call_function,
         call_params,
@@ -97,7 +96,6 @@ def assert_submit_signed_extrinsic(
     extrinsic = {
         "call": substrate.compose_call.return_value,
         "keypair": keypair,
-        "era": {"period": DEFAULT_PERIOD}
     }
 
     if era:

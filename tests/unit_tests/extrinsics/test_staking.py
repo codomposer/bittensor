@@ -1,17 +1,23 @@
-from bittensor.core.extrinsics import staking
-from bittensor.utils.balance import Balance
 import pytest
+
+from bittensor.core.extrinsics import staking
+from bittensor.core.settings import DEFAULT_MEV_PROTECTION
+from bittensor.utils.balance import Balance
+from bittensor.core.types import ExtrinsicResponse
 
 
 def test_add_stake_extrinsic(mocker):
     """Verify that sync `add_stake_extrinsic` method calls proper async method."""
     # Preps
+    fake_extrinsic_fee = Balance.from_tao(0.1)
     fake_subtensor = mocker.Mock(
         **{
             "get_balance.return_value": Balance(10),
             "get_existential_deposit.return_value": Balance(1),
             "get_hotkey_owner.return_value": "hotkey_owner",
-            "sign_and_send_extrinsic.return_value": (True, ""),
+            "sign_and_send_extrinsic.return_value": ExtrinsicResponse(
+                True, "Success", extrinsic_fee=fake_extrinsic_fee
+            ),
         }
     )
     fake_wallet_ = mocker.Mock(
@@ -32,66 +38,53 @@ def test_add_stake_extrinsic(mocker):
         hotkey_ss58=hotkey_ss58,
         netuid=fake_netuid,
         amount=amount,
+        mev_protection=DEFAULT_MEV_PROTECTION,
         wait_for_inclusion=wait_for_inclusion,
         wait_for_finalization=wait_for_finalization,
+        wait_for_revealed_execution=True,
     )
 
     # Asserts
-    assert result is True
+    assert result.success is True
+    assert result.extrinsic_fee == fake_extrinsic_fee
 
-    fake_subtensor.substrate.compose_call.assert_called_once_with(
+    fake_subtensor.compose_call.assert_called_once_with(
         call_module="SubtensorModule",
         call_function="add_stake",
         call_params={"hotkey": "hotkey", "amount_staked": 9, "netuid": 1},
     )
     fake_subtensor.sign_and_send_extrinsic.assert_called_once_with(
-        call=fake_subtensor.substrate.compose_call.return_value,
+        call=fake_subtensor.compose_call.return_value,
         wallet=fake_wallet_,
         wait_for_inclusion=True,
         wait_for_finalization=True,
         nonce_key="coldkeypub",
-        sign_with="coldkey",
         use_nonce=True,
         period=None,
+        raise_error=False,
     )
 
 
-def test_add_stake_multiple_extrinsic(mocker):
+def test_add_stake_multiple_extrinsic(subtensor, mocker, fake_wallet):
     """Verify that sync `add_stake_multiple_extrinsic` method calls proper async method."""
     # Preps
-    fake_subtensor = mocker.Mock(
-        **{
-            "get_balance.return_value": Balance(10.0),
-            "sign_and_send_extrinsic.return_value": (True, ""),
-            "substrate.query_multi.return_value": [
-                (
-                    mocker.Mock(
-                        **{
-                            "params": ["hotkey1"],
-                        },
-                    ),
-                    0,
-                ),
-                (
-                    mocker.Mock(
-                        **{
-                            "params": ["hotkey2"],
-                        },
-                    ),
-                    0,
-                ),
-            ],
-            "substrate.query.return_value": 0,
-        }
+    mocked_get_stake_for_coldkey = mocker.patch.object(
+        subtensor,
+        "get_stake_info_for_coldkey",
+        return_value=[Balance(1.1), Balance(0.3)],
+    )
+    mocked_get_balance = mocker.patch.object(
+        subtensor, "get_balance", return_value=Balance.from_tao(10)
     )
     mocker.patch.object(
         staking, "get_old_stakes", return_value=[Balance(1.1), Balance(0.3)]
     )
-    fake_wallet_ = mocker.Mock(
-        **{
-            "coldkeypub.ss58_address": "hotkey_owner",
-        }
+    mocked_add_stake_extrinsic = mocker.patch.object(
+        staking,
+        "add_stake_extrinsic",
+        return_value=ExtrinsicResponse(True, "Success"),
     )
+
     hotkey_ss58s = ["hotkey1", "hotkey2"]
     netuids = [1, 2]
     amounts = [Balance.from_tao(1.1), Balance.from_tao(2.2)]
@@ -100,48 +93,23 @@ def test_add_stake_multiple_extrinsic(mocker):
 
     # Call
     result = staking.add_stake_multiple_extrinsic(
-        subtensor=fake_subtensor,
-        wallet=fake_wallet_,
-        hotkey_ss58s=hotkey_ss58s,
+        subtensor=subtensor,
+        wallet=fake_wallet,
         netuids=netuids,
+        hotkey_ss58s=hotkey_ss58s,
         amounts=amounts,
+        mev_protection=DEFAULT_MEV_PROTECTION,
         wait_for_inclusion=wait_for_inclusion,
         wait_for_finalization=wait_for_finalization,
+        raise_error=True,
     )
 
     # Asserts
-    assert result is True
-    assert fake_subtensor.substrate.compose_call.call_count == 2
-    assert fake_subtensor.sign_and_send_extrinsic.call_count == 2
-
-    fake_subtensor.substrate.compose_call.assert_any_call(
-        call_module="SubtensorModule",
-        call_function="add_stake",
-        call_params={
-            "hotkey": "hotkey2",
-            "amount_staked": 2199999333,
-            "netuid": 2,
-        },
+    mocked_get_stake_for_coldkey.assert_called_once_with(
+        coldkey_ss58=fake_wallet.coldkeypub.ss58_address,
     )
-    fake_subtensor.substrate.compose_call.assert_any_call(
-        call_module="SubtensorModule",
-        call_function="add_stake",
-        call_params={
-            "hotkey": "hotkey2",
-            "amount_staked": 2199999333,
-            "netuid": 2,
-        },
-    )
-    fake_subtensor.sign_and_send_extrinsic.assert_called_with(
-        call=fake_subtensor.substrate.compose_call.return_value,
-        wallet=fake_wallet_,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-        nonce_key="coldkeypub",
-        sign_with="coldkey",
-        use_nonce=True,
-        period=None,
-    )
+    assert result.success is True
+    assert mocked_add_stake_extrinsic.call_count == 2
 
 
 @pytest.mark.parametrize(
@@ -158,14 +126,13 @@ def test_set_auto_stake_extrinsic(
     # Preps
     netuid = mocker.Mock()
     hotkey_ss58 = mocker.Mock()
-    mocked_unlock_key = mocker.patch.object(
-        staking, "unlock_key", return_value=mocker.Mock(success=True, message="True")
-    )
 
-    mocked_compose_call = mocker.patch.object(subtensor.substrate, "compose_call")
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
 
     mocked_sign_and_send_extrinsic = mocker.patch.object(
-        subtensor, "sign_and_send_extrinsic", return_value=(res_success, res_message)
+        subtensor,
+        "sign_and_send_extrinsic",
+        return_value=ExtrinsicResponse(res_success, res_message),
     )
 
     # Call
@@ -174,10 +141,10 @@ def test_set_auto_stake_extrinsic(
         wallet=fake_wallet,
         hotkey_ss58=hotkey_ss58,
         netuid=netuid,
+        mev_protection=DEFAULT_MEV_PROTECTION,
     )
 
     # Asserts
-    mocked_unlock_key.assert_called_once_with(fake_wallet, raise_error=False)
     mocked_compose_call.assert_called_once_with(
         call_module="SubtensorModule",
         call_function="set_coldkey_auto_stake_hotkey",

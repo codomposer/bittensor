@@ -1,6 +1,7 @@
 import ast
 import decimal
 import hashlib
+import inspect
 import warnings
 from collections import namedtuple
 from typing import Any, Literal, Union, Optional, TYPE_CHECKING
@@ -12,17 +13,26 @@ from async_substrate_interface.utils import (
 )
 from bittensor_wallet import Keypair
 from bittensor_wallet.errors import KeyFileError, PasswordError
-from scalecodec import ss58_decode, is_valid_ss58_address as _is_valid_ss58_address
+from bittensor_wallet.utils import SS58_FORMAT
+from scalecodec import (
+    ss58_decode,
+    ss58_encode,
+    is_valid_ss58_address as _is_valid_ss58_address,
+)
 
 from bittensor.core import settings
-from bittensor.core.settings import SS58_FORMAT
 from bittensor.utils.btlogging import logging
 from .registration import torch, use_torch
-from .version import version_checking, check_version, VersionCheckError
+from .version import check_version, VersionCheckError
 
 if TYPE_CHECKING:
     from bittensor_wallet import Wallet
+    from bittensor.core.types import ExtrinsicResponse
     from bittensor.utils.balance import Balance
+
+# keep save from import analyzer as obvious aliases
+hex_to_ss58 = ss58_encode
+ss58_to_hex = ss58_decode
 
 BT_DOCS_LINK = "https://docs.bittensor.com"
 RAOPERTAO = 1e9
@@ -36,7 +46,6 @@ UnlockStatus = namedtuple("UnlockStatus", ["success", "message"])
 logging = logging
 torch = torch
 use_torch = use_torch
-version_checking = version_checking
 check_version = check_version
 VersionCheckError = VersionCheckError
 ss58_decode = ss58_decode
@@ -135,13 +144,12 @@ def _get_explorer_root_url_by_network_from_map(
     """
     Returns the explorer root url for the given network name from the given network map.
 
-    Args:
-        network(str): The network to get the explorer url for.
-        network_map(dict[str, str]): The network map to get the explorer url from.
+    Parameters:
+        network: The network to get the explorer url for.
+        network_map: The network map to get the explorer url from.
 
     Returns:
-        The explorer url for the given network.
-        Or None if the network is not in the network map.
+        The explorer url for the given network. Or None if the network is not in the network map.
     """
     explorer_urls: Optional[dict[str, str]] = {}
     for entity_nm, entity_network_map in network_map.items():
@@ -157,14 +165,13 @@ def get_explorer_url_for_network(
     """
     Returns the explorer url for the given block hash and network.
 
-    Args:
-        network(str): The network to get the explorer url for.
-        block_hash(str): The block hash to get the explorer url for.
-        network_map(dict[str, dict[str, str]]): The network maps to get the explorer urls from.
+    Parameters:
+        network: The network to get the explorer url for.
+        block_hash: The block hash to get the explorer url for.
+        network_map: The network maps to get the explorer urls from.
 
     Returns:
-        The explorer url for the given block hash and network.
-        Or None if the network is not known.
+        The explorer url for the given block hash and network. Or None if the network is not known.
     """
 
     explorer_urls: Optional[dict[str, str]] = {}
@@ -226,12 +233,12 @@ def format_error_message(error_message: Union[dict, Exception]) -> str:
     """
     Formats an error message from the Subtensor error information for use in extrinsics.
 
-    Args:
+    Parameters:
         error_message: A dictionary containing the error information from Subtensor, or a SubstrateRequestException
-                       containing dictionary literal args.
+            containing dictionary literal args.
 
     Returns:
-        str: A formatted error message string.
+        A formatted error message string.
     """
     err_name = "UnknownError"
     err_type = "UnknownType"
@@ -310,8 +317,8 @@ def is_valid_ss58_address(address: str) -> bool:
     """
     Checks if the given address is a valid ss58 address.
 
-    Args:
-        address(str): The address to check.
+    Parameters:
+        address: The address to check.
 
     Returns:
         True if the address is a valid ss58 address for Bittensor, False otherwise.
@@ -330,8 +337,8 @@ def _is_valid_ed25519_pubkey(public_key: Union[str, bytes]) -> bool:
     """
     Checks if the given public_key is a valid ed25519 key.
 
-    Args:
-        public_key(Union[str, bytes]): The public_key to check.
+    Parameters:
+        public_key: The public_key to check.
 
     Returns:
         True if the public_key is a valid ed25519 key, False otherwise.
@@ -360,8 +367,8 @@ def is_valid_bittensor_address_or_public_key(address: Union[str, bytes]) -> bool
     """
     Checks if the given address is a valid destination address.
 
-    Args:
-        address(Union[str, bytes]): The address to check.
+    Parameters:
+        address: The address to check.
 
     Returns:
         True if the address is a valid destination address, False otherwise.
@@ -403,9 +410,9 @@ def unlock_key(
     """
     Attempts to decrypt a wallet's coldkey or hotkey
 
-    Args:
-        wallet: a Wallet object
-        unlock_type: the key type, 'coldkey' or 'hotkey'
+    Parameters:
+        wallet: Bittensor Wallet instance.
+        unlock_type: the key type, 'coldkey' or 'hotkey'.
         raise_error: if False, will return (False, error msg), if True will raise the otherwise-caught exception.
 
     Returns:
@@ -445,13 +452,12 @@ def determine_chain_endpoint_and_network(
 ) -> tuple[Optional[str], Optional[str]]:
     """Determines the chain endpoint and network from the passed network or chain_endpoint.
 
-    Arguments:
-        network (str): The network flag. The choices are: ``finney`` (main network), ``archive`` (archive network
-            +300 blocks), ``local`` (local running network), ``test`` (test network).
+    Parameters:
+        network: The network flag. The choices are: ``finney`` (main network), ``archive`` (archive network +300 blocks),
+             ``local`` (local running network), ``test`` (test network).
 
     Returns:
-        tuple[Optional[str], Optional[str]]: The network and chain endpoint flag. If passed, overrides the
-            ``network`` argument.
+        The network and chain endpoint flag. If passed, overrides the ``network`` argument.
     """
 
     if network is None:
@@ -463,7 +469,6 @@ def determine_chain_endpoint_and_network(
         "entrypoint-finney.opentensor.ai": ("finney", settings.FINNEY_ENTRYPOINT),
         "test.finney.opentensor.ai": ("test", settings.FINNEY_TEST_ENTRYPOINT),
         "archive.chain.opentensor.ai": ("archive", settings.ARCHIVE_ENTRYPOINT),
-        "subvortex": ("subvortex", settings.SUBVORTEX_ENTRYPOINT),
         "127.0.0.1": ("local", network),
         "localhost": ("local", network),
     }
@@ -481,32 +486,28 @@ def deprecated_message(message: str) -> None:
     warnings.warn(message=message, category=DeprecationWarning, stacklevel=2)
 
 
-def get_transfer_fn_params(
-    amount: Optional["Balance"], destination: str, keep_alive: bool
-) -> tuple[str, dict[str, Union[str, int, bool]]]:
-    """
-    Helper function to get the transfer call function and call params, depending on the value and keep_alive flag
-        provided
+def get_function_name() -> str:
+    """Return the current function's name."""
+    return inspect.currentframe().f_back.f_code.co_name
 
-    Args:
-        amount: the amount of Tao to transfer. `None` if transferring all.
-        destination: the destination SS58 of the transfer
-        keep_alive: whether to enforce a retention of the existential deposit in the account after transfer.
 
-    Returns:
-        tuple[call function, call params]
-    """
-    call_params = {"dest": destination}
-    if amount is None:
-        call_function = "transfer_all"
-        if keep_alive:
-            call_params["keep_alive"] = True
-        else:
-            call_params["keep_alive"] = False
-    else:
-        call_params["value"] = amount.rao
-        if keep_alive:
-            call_function = "transfer_keep_alive"
-        else:
-            call_function = "transfer_allow_death"
-    return call_function, call_params
+def get_caller_name(depth: int = 2) -> str:
+    """Return the name of the caller function."""
+    frame = inspect.currentframe()
+    for _ in range(depth):
+        if frame is not None:
+            frame = frame.f_back
+    return frame.f_code.co_name if frame else "unknown"
+
+
+def validate_max_attempts(
+    max_attempts: int, response: "ExtrinsicResponse"
+) -> Optional["ExtrinsicResponse"]:
+    """Common guard for all subtensor methods with max_attempts parameter."""
+    if max_attempts <= 0:
+        response.message = (
+            f"`max_attempts` parameter must be greater than 0, not {max_attempts}."
+        )
+        response.error = ValueError(response.message)
+        return response.with_log("warning")
+    return None

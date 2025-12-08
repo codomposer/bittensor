@@ -3,34 +3,54 @@ import os
 import shutil
 import subprocess
 import sys
+from typing import Optional
+from bittensor_wallet import Keypair, Wallet
 
-from bittensor_wallet import Keypair
-
-import bittensor
+from bittensor.extras import SubtensorApi
+from bittensor.utils.btlogging import logging
 
 template_path = os.getcwd() + "/neurons/"
 templates_repo = "templates repository"
 
 
-def setup_wallet(uri: str) -> tuple[Keypair, bittensor.Wallet]:
+def setup_wallet(
+    coldkey_uri: str,
+    hotkey_uri: Optional[str] = None,
+    encrypt_coldkey: bool = False,
+    encrypt_hotkey: bool = False,
+    coldkey_password: Optional[str] = None,
+    hotkey_password: Optional[str] = None,
+) -> Wallet:
     """
     Sets up a wallet using the provided URI.
 
-    This function creates a keypair from the given URI and initializes a wallet
-    at a temporary path. It sets the coldkey, coldkeypub, and hotkey for the wallet
-    using the generated keypair.
+    This function creates a keypair from the given URI and initializes a wallet at a temporary path. It sets the
+    coldkey, coldkeypub, and hotkey for the wallet using the generated keypair.
 
     Side Effects:
         - Creates a wallet in a temporary directory.
         - Sets keys in the wallet without encryption and with overwriting enabled.
     """
-    keypair = Keypair.create_from_uri(uri)
-    wallet_path = f"/tmp/btcli-e2e-wallet-{uri.strip('/')}"
-    wallet = bittensor.Wallet(path=wallet_path)
-    wallet.set_coldkey(keypair=keypair, encrypt=False, overwrite=True)
-    wallet.set_coldkeypub(keypair=keypair, encrypt=False, overwrite=True)
-    wallet.set_hotkey(keypair=keypair, encrypt=False, overwrite=True)
-    return keypair, wallet
+    keypair_ck = Keypair.create_from_uri(coldkey_uri)
+    keypair_hk = Keypair.create_from_uri(hotkey_uri or f"{coldkey_uri}_hk")
+    name = coldkey_uri.strip("/")
+    wallet_path = f"/tmp/btcli-e2e-wallet-{name}"
+    wallet = Wallet(name=name, path=wallet_path)
+    wallet.set_coldkey(
+        keypair=keypair_ck,
+        encrypt=encrypt_coldkey,
+        overwrite=True,
+        coldkey_password=coldkey_password,
+    )
+    wallet.set_coldkeypub(keypair=keypair_ck, encrypt=False, overwrite=True)
+    wallet.set_hotkey(
+        keypair=keypair_hk,
+        encrypt=encrypt_hotkey,
+        overwrite=True,
+        hotkey_password=hotkey_password,
+    )
+    wallet.set_hotkeypub(keypair=keypair_hk, encrypt=False, overwrite=True)
+    return wallet
 
 
 def clone_or_update_templates(specific_commit=None):
@@ -82,6 +102,16 @@ def uninstall_templates(install_dir):
     shutil.rmtree(install_dir)
 
 
+def get_event_loop():
+    """Returns the current event loop or creates a new one if there is none."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop
+
+
 class Templates:
     class Miner:
         def __init__(self, dir, wallet, netuid):
@@ -89,8 +119,15 @@ class Templates:
             self.wallet = wallet
             self.netuid = netuid
             self.process = None
-
+            self.loop = get_event_loop()
             self.started = asyncio.Event()
+
+        def __enter__(self):
+            self.loop.run_until_complete(self.__aenter__())
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            self.loop.run_until_complete(self.__aexit__(exc_type, exc_value, traceback))
 
         async def __aenter__(self):
             env = os.environ.copy()
@@ -135,10 +172,10 @@ class Templates:
         async def _reader(self):
             async for line in self.process.stdout:
                 try:
-                    bittensor.logging.console.info(
+                    logging.console.info(
                         f"[green]MINER LOG: {line.split(b'|')[-1].strip().decode()}[/blue]"
                     )
-                except BaseException:
+                except Exception:
                     # skipp empty lines
                     pass
 
@@ -152,6 +189,7 @@ class Templates:
             self.netuid = netuid
             self.process = None
 
+            self.loop = get_event_loop()
             self.started = asyncio.Event()
             self.set_weights = asyncio.Event()
 
@@ -189,27 +227,34 @@ class Templates:
 
             return self
 
+        def __enter__(self):
+            self.loop.run_until_complete(self.__aenter__())
+            return self
+
         async def __aexit__(self, exc_type, exc_value, traceback):
             self.process.terminate()
             self.__reader_task.cancel()
 
             await self.process.wait()
 
+        def __exit__(self, exc_type, exc_value, traceback):
+            self.loop.run_until_complete(self.__aexit__(exc_type, exc_value, traceback))
+
         async def _reader(self):
             async for line in self.process.stdout:
                 try:
-                    bittensor.logging.console.info(
+                    logging.console.info(
                         f"[orange]VALIDATOR LOG: {line.split(b'|')[-1].strip().decode()}[/orange]"
                     )
-                except BaseException:
+                except Exception:
                     # skipp empty lines
                     pass
 
                 if b"Starting validator loop." in line:
-                    bittensor.logging.console.info("Validator started.")
+                    logging.console.info("Validator started.")
                     self.started.set()
-                elif b"Successfully set weights and Finalized." in line:
-                    bittensor.logging.console.info("Validator is setting weights.")
+                elif b"Success" in line:
+                    logging.console.info("Validator is setting weights.")
                     self.set_weights.set()
 
     def __init__(self):
@@ -226,68 +271,3 @@ class Templates:
 
     def validator(self, wallet, netuid):
         return self.Validator(self.dir, wallet, netuid)
-
-
-def wait_to_start_call(
-    subtensor: "bittensor.SubtensorApi",
-    subnet_owner_wallet: "bittensor.Wallet",
-    netuid: int,
-    in_blocks: int = 10,
-):
-    """Waits for a certain number of blocks before making a start call."""
-    if subtensor.chain.is_fast_blocks() is False:
-        in_blocks = 5
-    bittensor.logging.console.info(
-        f"Waiting for [blue]{in_blocks}[/blue] blocks before [red]start call[/red]. "
-        f"Current block: [blue]{subtensor.block}[/blue]."
-    )
-
-    # make sure subnet isn't active
-    assert subtensor.subnets.is_subnet_active(netuid) is False, (
-        "Subnet is already active."
-    )
-
-    # make sure we passed start_call limit
-    subtensor.wait_for_block(subtensor.block + in_blocks + 1)
-    status, message = subtensor.start_call(
-        wallet=subnet_owner_wallet,
-        netuid=netuid,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-    assert status, message
-    # make sure subnet is active
-    assert subtensor.subnets.is_subnet_active(netuid), (
-        "Subnet did not activated after start call."
-    )
-
-    return True
-
-
-async def async_wait_to_start_call(
-    subtensor: "bittensor.AsyncSubtensor",
-    subnet_owner_wallet: "bittensor.Wallet",
-    netuid: int,
-    in_blocks: int = 10,
-):
-    """Waits for a certain number of blocks before making a start call."""
-    if await subtensor.is_fast_blocks() is False:
-        in_blocks = 5
-
-    current_block = await subtensor.block
-
-    bittensor.logging.console.info(
-        f"Waiting for [blue]{in_blocks}[/blue] blocks before [red]start call[/red]. "
-        f"Current block: [blue]{current_block}[/blue]."
-    )
-
-    # make sure we passed start_call limit
-    await subtensor.wait_for_block(current_block + in_blocks + 1)
-    status, message = await subtensor.start_call(
-        wallet=subnet_owner_wallet,
-        netuid=netuid,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-    assert status, message
-    return True

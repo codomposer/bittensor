@@ -27,9 +27,6 @@ on:
           - devnet
           - devnet-ready
 
-env:
-  CARGO_TERM_COLOR: always
-
 # job to run tests in parallel
 jobs:
   # Looking for e2e tests
@@ -45,13 +42,26 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
 
-      - name: Install deps for collection
-        run: |
-         python -m pip install --upgrade pip
-          python -m pip install uv
-          uv pip install -e ".[dev]" --system
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: false
+          cache-dependency-glob: '**/pyproject.toml'
+          ignore-nothing-to-cache: true
+
+      - name: Cache uv and venv
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            .venv
+          key: uv-${{ runner.os }}-py3.10-${{ hashFiles('pyproject.toml') }}
+          restore-keys: uv-${{ runner.os }}-py3.10-
+
+      - name: Install dependencies (faster if cache hit)
+        run: uv sync --extra dev --dev
 
       - name: Find test files
         id: get-tests
@@ -59,7 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           test_matrix=$(
-            pytest -q --collect-only tests/e2e_tests \
+            uv run pytest -q --collect-only tests/e2e_tests \
             | sed -n '/^e2e_tests\//p' \
             | sed 's|^|tests/|' \
             | jq -R -s -c '
@@ -70,6 +80,18 @@ jobs:
           )
           echo "Found tests: $test_matrix"
           echo "test-files=$test_matrix" >> "$GITHUB_OUTPUT"
+
+  # Read Python versions
+  read-python-versions:
+    runs-on: ubuntu-latest
+    outputs:
+      python-versions: ${{ steps.read-versions.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read-versions
+        run: |
+          versions=$(cat .github/supported-python-versions.json)
+          echo "versions=$versions" >> $GITHUB_OUTPUT
 
   # Pull docker image
   pull-docker-image:
@@ -169,65 +191,26 @@ jobs:
         with:
           name: subtensor-localnet
           path: subtensor-localnet.tar
+          compression-level: 0
 
   # Job to run tests in parallel
-  run-fast-blocks-e2e-test:
-    name: "${{ matrix.test.label }} / Py ${{ matrix.python-version }}"
+  # Since GH Actions matrix has a limit of 256 jobs, we need to split the tests into multiple jobs with different
+  # Python versions. To reduce DRY we use reusable workflow.
+
+  e2e-test:
+    name: ${{ matrix.label }}
     needs:
       - find-tests
       - pull-docker-image
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+      - read-python-versions
     strategy:
-      fail-fast: false  # Allow other matrix jobs to run even if this job fails
-      max-parallel: 64  # Set the maximum number of parallel jobs (same as we have cores in ubuntu-latest runner)
+      fail-fast: false
+      max-parallel: 16
       matrix:
-        os:
-          - ubuntu-latest
-        test: ${{ fromJson(needs.find-tests.outputs.test-files) }}
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-    steps:
-      - name: Check-out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: install dependencies
-        run: uv sync --extra dev --dev
-
-      - name: Download Cached Docker Image
-        uses: actions/download-artifact@v4
-        with:
-          name: subtensor-localnet
-
-      - name: Load Docker Image
-        run: docker load -i subtensor-localnet.tar
-
-      - name: Run tests with retry
-        env:
-          LOCALNET_IMAGE_NAME: ${{ needs.pull-docker-image.outputs.image-name }}
-        run: |
-          for i in 1 2 3; do
-            echo "::group::🔁 Test attempt $i"
-            if uv run pytest "${{ matrix.test.nodeid }}" -s; then
-              echo "✅ Tests passed on attempt $i"
-              echo "::endgroup::"
-              exit 0
-            else
-              echo "❌ Tests failed on attempt $i"
-              echo "::endgroup::"
-              if [ "$i" -lt 3 ]; then
-                echo "Retrying..."
-                sleep 5
-              fi
-            fi
-          done
-
-          echo "Tests failed after 3 attempts"
-          exit 1
+        include: ${{ fromJson(needs.find-tests.outputs.test-files) }}
+    uses: ./.github/workflows/_run-e2e-single.yaml
+    with:
+      nodeid: ${{ matrix.nodeid }}
+      image-name: ${{ needs.pull-docker-image.outputs.image-name }}
+      python-versions: ${{ needs.read-python-versions.outputs.python-versions }}
+    secrets: inherit

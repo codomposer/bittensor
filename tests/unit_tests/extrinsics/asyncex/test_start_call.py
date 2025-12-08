@@ -10,10 +10,9 @@ async def test_start_call_extrinsics(subtensor, mocker, fake_wallet):
     wallet = fake_wallet
     wallet.name = "fake_wallet"
     wallet.coldkey = "fake_coldkey"
-    substrate = subtensor.substrate.__aenter__.return_value
-    substrate.compose_call = mocker.AsyncMock()
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
     mocked_sign_and_send_extrinsic = mocker.patch.object(
-        subtensor, "sign_and_send_extrinsic", return_value=(True, "")
+        subtensor, "sign_and_send_extrinsic", return_value=(True, "Success")
     )
 
     # Call
@@ -24,18 +23,19 @@ async def test_start_call_extrinsics(subtensor, mocker, fake_wallet):
     )
 
     # Assertions
-    substrate.compose_call.assert_awaited_once_with(
+    mocked_compose_call.assert_awaited_once_with(
         call_module="SubtensorModule",
         call_function="start_call",
         call_params={"netuid": netuid},
     )
 
     mocked_sign_and_send_extrinsic.assert_awaited_once_with(
-        call=substrate.compose_call.return_value,
+        call=mocked_compose_call.return_value,
         wallet=wallet,
         wait_for_inclusion=True,
         wait_for_finalization=False,
         period=None,
+        raise_error=False,
     )
 
     assert success is True

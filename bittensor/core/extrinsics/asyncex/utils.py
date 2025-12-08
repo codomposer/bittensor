@@ -1,40 +1,11 @@
 from typing import TYPE_CHECKING, Optional
 
-from bittensor.utils import unlock_key
-from bittensor.utils.balance import Balance
-from bittensor.utils.btlogging import logging
+from bittensor.core.extrinsics.pallets import Sudo
+from bittensor.core.types import ExtrinsicResponse
 
 if TYPE_CHECKING:
-    from scalecodec import GenericCall
-    from bittensor_wallet import Keypair
     from bittensor.core.async_subtensor import AsyncSubtensor
     from bittensor_wallet import Wallet
-
-
-async def get_extrinsic_fee(
-    subtensor: "AsyncSubtensor",
-    call: "GenericCall",
-    keypair: "Keypair",
-    netuid: Optional[int] = None,
-):
-    """
-    Get extrinsic fee for a given extrinsic call and keypair for a given SN's netuid.
-
-    Arguments:
-        subtensor: The Subtensor instance.
-        netuid: The SN's netuid.
-        call: The extrinsic call.
-        keypair: The keypair associated with the extrinsic.
-
-    Returns:
-        Balance object representing the extrinsic fee in RAO.
-    """
-    payment_info = await subtensor.substrate.get_payment_info(
-        call=call, keypair=keypair
-    )
-    return Balance.from_rao(amount=payment_info["partial_fee"]).set_unit(
-        netuid=netuid or 0
-    )
 
 
 async def sudo_call_extrinsic(
@@ -50,7 +21,8 @@ async def sudo_call_extrinsic(
     raise_error: bool = False,
     wait_for_inclusion: bool = True,
     wait_for_finalization: bool = True,
-) -> tuple[bool, str]:
+    root_call: bool = False,
+) -> ExtrinsicResponse:
     """Execute a sudo call extrinsic.
 
     Parameters:
@@ -68,30 +40,29 @@ async def sudo_call_extrinsic(
         raise_error: Raises a relevant exception rather than returning `False` if unsuccessful.
         wait_for_inclusion: Whether to wait for the inclusion of the transaction.
         wait_for_finalization: Whether to wait for the finalization of the transaction.
+        root_call: False, if the subnet owner makes a call.
 
     Returns:
-        tuple[bool, str]:
-            `True` if the extrinsic executed successfully, `False` otherwise.
-            `message` is a string value describing the success or potential error.
+        ExtrinsicResponse: The result object of the extrinsic execution.
     """
     try:
-        unlock = unlock_key(wallet, raise_error=raise_error)
-        if not unlock.success:
-            logging.error(unlock.message)
-            return False, unlock.message
-        sudo_call = await subtensor.substrate.compose_call(
-            call_module="Sudo",
-            call_function="sudo",
-            call_params={
-                "call": await subtensor.substrate.compose_call(
-                    call_module=call_module,
-                    call_function=call_function,
-                    call_params=call_params,
-                )
-            },
+        if not (
+            unlocked := ExtrinsicResponse.unlock_wallet(
+                wallet, raise_error, unlock_type=sign_with
+            )
+        ).success:
+            return unlocked
+
+        call = await subtensor.compose_call(
+            call_module=call_module,
+            call_function=call_function,
+            call_params=call_params,
         )
+        if not root_call:
+            call = await Sudo(subtensor).sudo(call)
+
         return await subtensor.sign_and_send_extrinsic(
-            call=sudo_call,
+            call=call,
             wallet=wallet,
             sign_with=sign_with,
             use_nonce=use_nonce,
@@ -103,7 +74,4 @@ async def sudo_call_extrinsic(
         )
 
     except Exception as error:
-        if raise_error:
-            raise error
-
-        return False, str(error)
+        return ExtrinsicResponse.from_exception(raise_error=raise_error, error=error)

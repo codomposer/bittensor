@@ -1,25 +1,8 @@
-# The MIT License (MIT)
-# Copyright © 2024 Opentensor Foundation
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
-# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
-# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
-# the Software.
-#
-# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
-# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-# DEALINGS IN THE SOFTWARE.
-
 from unittest.mock import MagicMock, patch
 
 import pytest
 from bittensor_wallet import Wallet
-
+from bittensor.core.types import ExtrinsicResponse
 from bittensor.core.axon import Axon
 from bittensor.core.subtensor import Subtensor
 from bittensor.core.extrinsics import serving
@@ -110,24 +93,29 @@ def test_serve_extrinsic_happy_path(
     test_id,
     mocker,
 ):
-    # Arrange
-    serving.do_serve_axon = mocker.MagicMock(return_value=(True, ""))
-    # Act
-    result = serving.serve_extrinsic(
+    # Prep
+    mocker.patch.object(
         mock_subtensor,
-        mock_wallet,
-        ip,
-        port,
-        protocol,
-        netuid,
-        placeholder1,
-        placeholder2,
-        wait_for_inclusion,
-        wait_for_finalization,
+        "sign_and_send_extrinsic",
+        return_value=ExtrinsicResponse(True, ""),
+    )
+    # Call
+    result = serving.serve_extrinsic(
+        subtensor=mock_subtensor,
+        wallet=mock_wallet,
+        ip=ip,
+        port=port,
+        protocol=protocol,
+        netuid=netuid,
+        placeholder1=placeholder1,
+        placeholder2=placeholder2,
+        wait_for_inclusion=wait_for_inclusion,
+        wait_for_finalization=wait_for_finalization,
+        wait_for_revealed_execution=True,
     )
 
     # Assert
-    assert result == expected, f"Test ID: {test_id}"
+    assert result.success == expected, f"Test ID: {test_id}"
 
 
 # Various edge cases
@@ -164,24 +152,30 @@ def test_serve_extrinsic_edge_cases(
     test_id,
     mocker,
 ):
-    # Arrange
-    serving.do_serve_axon = mocker.MagicMock(return_value=(True, ""))
-    # Act
-    result = serving.serve_extrinsic(
+    # Prep
+    mocker.patch.object(
         mock_subtensor,
-        mock_wallet,
-        ip,
-        port,
-        protocol,
-        netuid,
-        placeholder1,
-        placeholder2,
-        wait_for_inclusion,
-        wait_for_finalization,
+        "sign_and_send_extrinsic",
+        return_value=ExtrinsicResponse(True, ""),
+    )
+
+    # Call
+    result = serving.serve_extrinsic(
+        subtensor=mock_subtensor,
+        wallet=mock_wallet,
+        ip=ip,
+        port=port,
+        protocol=protocol,
+        netuid=netuid,
+        placeholder1=placeholder1,
+        placeholder2=placeholder2,
+        wait_for_inclusion=wait_for_inclusion,
+        wait_for_finalization=wait_for_finalization,
+        wait_for_revealed_execution=True,
     )
 
     # Assert
-    assert result == expected, f"Test ID: {test_id}"
+    assert result.success == expected, f"Test ID: {test_id}"
 
 
 # Various error cases
@@ -218,24 +212,29 @@ def test_serve_extrinsic_error_cases(
     test_id,
     mocker,
 ):
-    # Arrange
-    serving.do_serve_axon = mocker.MagicMock(return_value=(False, "Error serving axon"))
-    # Act
-    result = serving.serve_extrinsic(
+    # Prep
+    mocker.patch.object(
         mock_subtensor,
-        mock_wallet,
-        ip,
-        port,
-        protocol,
-        netuid,
-        placeholder1,
-        placeholder2,
-        wait_for_inclusion,
-        wait_for_finalization,
+        "sign_and_send_extrinsic",
+        return_value=ExtrinsicResponse(False, ""),
+    )
+    # Call
+    result = serving.serve_extrinsic(
+        subtensor=mock_subtensor,
+        wallet=mock_wallet,
+        ip=ip,
+        port=port,
+        protocol=protocol,
+        netuid=netuid,
+        placeholder1=placeholder1,
+        placeholder2=placeholder2,
+        wait_for_inclusion=wait_for_inclusion,
+        wait_for_finalization=wait_for_finalization,
+        wait_for_revealed_execution=True,
     )
 
     # Assert
-    assert result == expected_error_message, f"Test ID: {test_id}"
+    assert result.success == expected_error_message, f"Test ID: {test_id}"
 
 
 @pytest.mark.parametrize(
@@ -281,39 +280,46 @@ def test_serve_axon_extrinsic(
     mocker,
 ):
     mock_axon.external_ip = external_ip
-    # Arrange
+    # Preps
     with patch(
         "bittensor.utils.networking.get_external_ip",
         side_effect=Exception("Failed to fetch IP")
         if not external_ip_success
         else MagicMock(return_value="192.168.1.1"),
     ):
-        serving.do_serve_axon = mocker.MagicMock(return_value=(serve_success, ""))
-        # Act
+        mocker.patch.object(
+            mock_subtensor,
+            "sign_and_send_extrinsic",
+            return_value=ExtrinsicResponse(serve_success, ""),
+        )
+
+        # Calls
         if not external_ip_success:
             with pytest.raises(ConnectionError):
                 serving.serve_axon_extrinsic(
-                    mock_subtensor,
-                    netuid,
-                    mock_axon,
+                    subtensor=mock_subtensor,
+                    netuid=netuid,
+                    axon=mock_axon,
                     wait_for_inclusion=wait_for_inclusion,
                     wait_for_finalization=wait_for_finalization,
+                    raise_error=True,
                 )
         else:
             result = serving.serve_axon_extrinsic(
-                mock_subtensor,
-                netuid,
-                mock_axon,
+                subtensor=mock_subtensor,
+                netuid=netuid,
+                axon=mock_axon,
                 wait_for_inclusion=wait_for_inclusion,
                 wait_for_finalization=wait_for_finalization,
+                wait_for_revealed_execution=True,
             )
 
             # Assert
-            assert result == expected_result, f"Test ID: {test_id}"
+            assert result.success == expected_result, f"Test ID: {test_id}"
 
 
 @pytest.mark.parametrize(
-    "wait_for_inclusion, wait_for_finalization, net_uid, type_u, data, response_success, expected_result, test_id",
+    "wait_for_inclusion, wait_for_finalization, net_uid, type_u, data, response_success, test_id",
     [
         (
             True,
@@ -321,8 +327,7 @@ def test_serve_axon_extrinsic(
             1,
             "Sha256",
             b"mock_bytes_data",
-            (True, ""),
-            True,
+            ExtrinsicResponse(True, ""),
             "happy-path-wait",
         ),
         (
@@ -331,8 +336,7 @@ def test_serve_axon_extrinsic(
             1,
             "Sha256",
             b"mock_bytes_data",
-            (True, ""),
-            True,
+            ExtrinsicResponse(True, ""),
             "happy-path-no-wait",
         ),
     ],
@@ -347,18 +351,17 @@ def test_publish_metadata(
     type_u,
     data,
     response_success,
-    expected_result,
     test_id,
 ):
     # Arrange
     with (
-        patch.object(mock_subtensor.substrate, "compose_call"),
+        patch.object(mock_subtensor, "compose_call"),
         patch.object(
             mock_subtensor, "sign_and_send_extrinsic", return_value=response_success
         ) as mocked_sign_and_send_extrinsic,
     ):
         # Act
-        result = serving.publish_metadata(
+        result = serving.publish_metadata_extrinsic(
             subtensor=mock_subtensor,
             wallet=mock_wallet,
             netuid=net_uid,
@@ -366,14 +369,16 @@ def test_publish_metadata(
             data=data,
             wait_for_inclusion=wait_for_inclusion,
             wait_for_finalization=wait_for_finalization,
+            wait_for_revealed_execution=True,
         )
         # Assert
-        assert result == expected_result, f"Test ID: {test_id}"
+        assert result.success is True, f"Test ID: {test_id}"
         mocked_sign_and_send_extrinsic.assert_called_once_with(
-            call=mock_subtensor.substrate.compose_call.return_value,
+            call=mock_subtensor.compose_call.return_value,
             wallet=mock_wallet,
             sign_with="hotkey",
             wait_for_inclusion=wait_for_inclusion,
             wait_for_finalization=wait_for_finalization,
             period=None,
+            raise_error=False,
         )

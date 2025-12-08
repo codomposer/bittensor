@@ -1,10 +1,11 @@
 from bittensor.core.extrinsics import children
+from bittensor.core.types import ExtrinsicResponse
 
 
 def test_set_children_extrinsic(subtensor, mocker, fake_wallet):
     """Test that set_children_extrinsic correctly constructs and submits the extrinsic."""
     # Preps
-    hotkey = "fake hotkey"
+    hotkey_ss58 = "fake hotkey"
     netuid = 123
     fake_children = [
         (
@@ -13,22 +14,24 @@ def test_set_children_extrinsic(subtensor, mocker, fake_wallet):
         ),
     ]
 
-    subtensor.substrate.compose_call = mocker.Mock()
+    subtensor.compose_call = mocker.Mock()
     mocked_sign_and_send_extrinsic = mocker.patch.object(
-        subtensor, "sign_and_send_extrinsic", return_value=(True, "")
+        subtensor,
+        "sign_and_send_extrinsic",
+        return_value=ExtrinsicResponse(True, "Success"),
     )
 
     # Call
     success, message = children.set_children_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        hotkey=hotkey,
+        hotkey_ss58=hotkey_ss58,
         netuid=netuid,
         children=fake_children,
     )
 
     # Asserts
-    subtensor.substrate.compose_call.assert_called_once_with(
+    subtensor.compose_call.assert_called_once_with(
         call_module="SubtensorModule",
         call_function="set_children",
         call_params={
@@ -44,12 +47,12 @@ def test_set_children_extrinsic(subtensor, mocker, fake_wallet):
     )
 
     mocked_sign_and_send_extrinsic.assert_called_once_with(
-        call=subtensor.substrate.compose_call.return_value,
+        call=subtensor.compose_call.return_value,
         wallet=fake_wallet,
-        wait_for_inclusion=True,
-        wait_for_finalization=False,
         period=None,
         raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
     )
 
     assert success is True
@@ -61,9 +64,14 @@ def test_root_set_pending_childkey_cooldown_extrinsic(subtensor, mocker, fake_wa
     # Preps
     cooldown = 100
 
-    subtensor.substrate.compose_call = mocker.Mock()
+    mocked_pallet_compose_call = mocker.patch.object(
+        children.SubtensorModule, "set_pending_childkey_cooldown"
+    )
+    mocked_pallet_sudo_compose_call = mocker.patch.object(children.Sudo, "sudo")
     mocked_sign_and_send_extrinsic = mocker.patch.object(
-        subtensor, "sign_and_send_extrinsic", return_value=(True, "")
+        subtensor,
+        "sign_and_send_extrinsic",
+        return_value=ExtrinsicResponse(True, "Success"),
     )
 
     # Call
@@ -73,14 +81,17 @@ def test_root_set_pending_childkey_cooldown_extrinsic(subtensor, mocker, fake_wa
         cooldown=cooldown,
     )
     # Asserts
-
-    subtensor.substrate.compose_call.call_count == 2
+    mocked_pallet_compose_call.assert_called_once_with(cooldown=cooldown)
+    mocked_pallet_sudo_compose_call.assert_called_once_with(
+        call=mocked_pallet_compose_call.return_value
+    )
     mocked_sign_and_send_extrinsic.assert_called_once_with(
-        call=subtensor.substrate.compose_call.return_value,
+        call=mocked_pallet_sudo_compose_call.return_value,
         wallet=fake_wallet,
+        period=None,
+        raise_error=False,
         wait_for_inclusion=True,
         wait_for_finalization=False,
-        period=None,
     )
     assert success is True
     assert "Success" in message

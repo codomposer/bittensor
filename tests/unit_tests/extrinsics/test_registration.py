@@ -1,23 +1,6 @@
-# The MIT License (MIT)
-# Copyright © 2024 Opentensor Foundation
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
-# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
-# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
-# the Software.
-#
-# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
-# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-# DEALINGS IN THE SOFTWARE.
-
 import pytest
 from bittensor_wallet import Wallet
-
+from bittensor.core.types import ExtrinsicResponse
 from bittensor.core.extrinsics import registration
 from bittensor.core.subtensor import Subtensor
 from bittensor.utils.registration import POWSolution
@@ -62,26 +45,33 @@ def mock_new_wallet(mocker):
 
 
 @pytest.mark.parametrize(
-    "subnet_exists, neuron_is_null, cuda_available, expected_result, test_id",
+    "subnet_exists, neuron_is_null, cuda_available, expected_result, expected_message",
     [
-        (False, True, True, False, "subnet-does-not-exist"),
-        (True, False, True, True, "neuron-already-registered"),
-        (True, True, False, False, "cuda-unavailable"),
+        (
+            False,
+            True,
+            True,
+            False,
+            "Subnet 123 does not exist.",
+        ),
+        (True, False, True, True, "Already registered."),
+        (True, True, False, False, "CUDA not available."),
     ],
+    ids=["subnet-does-not-exist", "neuron-already-registered", "cuda-unavailable"],
 )
 def test_register_extrinsic_without_pow(
     mock_subtensor,
     mock_wallet,
+    mocker,
     subnet_exists,
     neuron_is_null,
     cuda_available,
     expected_result,
-    test_id,
-    mocker,
+    expected_message,
 ):
     # Arrange
     mocker.patch.object(mock_subtensor, "subnet_exists", return_value=subnet_exists)
-    mocker.patch.object(
+    fake_neuron = mocker.patch.object(
         mock_subtensor,
         "get_neuron_for_pubkey_and_subnet",
         return_value=mocker.MagicMock(is_null=neuron_is_null),
@@ -110,18 +100,35 @@ def test_register_extrinsic_without_pow(
     )
 
     # Assert
-    assert result == expected_result, f"Test failed for test_id: {test_id}"
+    data = (
+        {"neuron": fake_neuron.return_value}
+        if fake_neuron.call_count > 0 and cuda_available
+        else None
+    )
+    expected_result = ExtrinsicResponse(
+        expected_result,
+        expected_message,
+        extrinsic_function="register_extrinsic",
+        data=data,
+    )
+    assert result == expected_result
 
 
 @pytest.mark.parametrize(
-    "pow_success, pow_stale, registration_success, cuda, hotkey_registered, expected_result, test_id",
+    "pow_success, pow_stale, registration_success, cuda, hotkey_registered, expected_result",
     [
-        (True, False, True, False, False, True, "successful-with-valid-pow"),
-        (True, False, True, True, False, True, "successful-with-valid-cuda-pow"),
+        (True, False, True, False, False, True),
+        (True, False, True, True, False, True),
         # Pow failed but key was registered already
-        (False, False, False, False, True, True, "hotkey-registered"),
+        (False, False, False, False, True, True),
         # Pow was a success but registration failed with error 'key already registered'
-        (True, False, False, False, False, True, "registration-fail-key-registered"),
+        (True, False, False, False, False, False),
+    ],
+    ids=[
+        "successful-with-valid-pow",
+        "successful-with-valid-cuda-pow",
+        "hotkey-registered",
+        "registration-fail-key-registered",
     ],
 )
 def test_register_extrinsic_with_pow(
@@ -134,7 +141,6 @@ def test_register_extrinsic_with_pow(
     cuda,
     hotkey_registered,
     expected_result,
-    test_id,
     mocker,
 ):
     # Arrange
@@ -146,9 +152,12 @@ def test_register_extrinsic_with_pow(
         "bittensor.utils.registration.pow._solve_for_difficulty_fast_cuda",
         return_value=mock_pow_solution if pow_success else None,
     )
-    mocker.patch(
-        "bittensor.core.extrinsics.registration._do_pow_register",
-        return_value=(registration_success, "HotKeyAlreadyRegisteredInSubNet"),
+    mocker.patch.object(
+        mock_subtensor,
+        "sign_and_send_extrinsic",
+        return_value=ExtrinsicResponse(
+            registration_success, "HotKeyAlreadyRegisteredInSubNet"
+        ),
     )
     mocker.patch("torch.cuda.is_available", return_value=cuda)
 
@@ -178,7 +187,7 @@ def test_register_extrinsic_with_pow(
     )
 
     # Assert
-    assert result == expected_result, f"Test failed for test_id: {test_id}."
+    assert result[0] is expected_result
 
 
 @pytest.mark.parametrize(
@@ -215,9 +224,10 @@ def test_burned_register_extrinsic(
         "get_neuron_for_pubkey_and_subnet",
         return_value=mocker.MagicMock(is_null=neuron_is_null),
     )
-    mocker.patch(
-        "bittensor.core.extrinsics.registration._do_burned_register",
-        return_value=(recycle_success, "Mock error message"),
+    mocker.patch.object(
+        mock_subtensor,
+        "sign_and_send_extrinsic",
+        return_value=ExtrinsicResponse(recycle_success, "Mock error message"),
     )
     mocker.patch.object(
         mock_subtensor, "is_hotkey_registered", return_value=is_registered
@@ -228,7 +238,7 @@ def test_burned_register_extrinsic(
         subtensor=mock_subtensor, wallet=mock_wallet, netuid=123
     )
     # Assert
-    assert result == expected_result, f"Test failed for test_id: {test_id}"
+    assert result.success == expected_result, f"Test failed for test_id: {test_id}"
 
 
 def test_set_subnet_identity_extrinsic_is_success(mock_subtensor, mock_wallet, mocker):
@@ -244,9 +254,9 @@ def test_set_subnet_identity_extrinsic_is_success(mock_subtensor, mock_wallet, m
     description = "mock_description"
     additional = "mock_additional"
 
-    mocked_compose_call = mocker.patch.object(mock_subtensor.substrate, "compose_call")
+    mocked_compose_call = mocker.patch.object(mock_subtensor, "compose_call")
     mocked_sign_and_send_extrinsic = mocker.patch.object(
-        mock_subtensor, "sign_and_send_extrinsic", return_value=(True, "Success")
+        mock_subtensor, "sign_and_send_extrinsic"
     )
 
     # Call
@@ -269,7 +279,6 @@ def test_set_subnet_identity_extrinsic_is_success(mock_subtensor, mock_wallet, m
         call_module="SubtensorModule",
         call_function="set_subnet_identity",
         call_params={
-            "hotkey": mock_wallet.hotkey.ss58_address,
             "netuid": netuid,
             "subnet_name": subnet_name,
             "github_repo": github_repo,
@@ -284,12 +293,13 @@ def test_set_subnet_identity_extrinsic_is_success(mock_subtensor, mock_wallet, m
     mocked_sign_and_send_extrinsic.assert_called_once_with(
         call=mocked_compose_call.return_value,
         wallet=mock_wallet,
-        wait_for_inclusion=False,
+        wait_for_inclusion=True,
         wait_for_finalization=True,
         period=None,
+        raise_error=False,
     )
 
-    assert result == (True, "Identities for subnet 123 are set.")
+    assert result == mocked_sign_and_send_extrinsic.return_value
 
 
 def test_set_subnet_identity_extrinsic_is_failed(mock_subtensor, mock_wallet, mocker):
@@ -307,11 +317,10 @@ def test_set_subnet_identity_extrinsic_is_failed(mock_subtensor, mock_wallet, mo
 
     fake_error_message = "error message"
 
-    mocked_compose_call = mocker.patch.object(mock_subtensor.substrate, "compose_call")
+    mocked_compose_call = mocker.patch.object(mock_subtensor, "compose_call")
     mocked_sign_and_send_extrinsic = mocker.patch.object(
         mock_subtensor,
         "sign_and_send_extrinsic",
-        return_value=(False, fake_error_message),
     )
 
     # Call
@@ -334,7 +343,6 @@ def test_set_subnet_identity_extrinsic_is_failed(mock_subtensor, mock_wallet, mo
         call_module="SubtensorModule",
         call_function="set_subnet_identity",
         call_params={
-            "hotkey": mock_wallet.hotkey.ss58_address,
             "netuid": netuid,
             "subnet_name": subnet_name,
             "github_repo": github_repo,
@@ -349,12 +357,10 @@ def test_set_subnet_identity_extrinsic_is_failed(mock_subtensor, mock_wallet, mo
     mocked_sign_and_send_extrinsic.assert_called_once_with(
         call=mocked_compose_call.return_value,
         wallet=mock_wallet,
-        wait_for_inclusion=False,
+        wait_for_inclusion=True,
         wait_for_finalization=True,
         period=None,
+        raise_error=False,
     )
 
-    assert result == (
-        False,
-        f"Failed to set identity for subnet {netuid}: {fake_error_message}",
-    )
+    assert result == mocked_sign_and_send_extrinsic.return_value

@@ -3,14 +3,6 @@ import pytest
 from freezegun import freeze_time
 from datetime import datetime, timedelta, timezone
 
-# from bittensor.utils.version import (
-#     VERSION_CHECK_THRESHOLD,
-#     VersionCheckError,
-#     get_and_save_latest_version,
-#     check_version,
-#     version_checking,
-#     __version__
-# )
 from bittensor.utils import version
 
 from unittest.mock import MagicMock
@@ -132,21 +124,3 @@ def test_check_version_up_to_date(
     captured = capsys.readouterr()
 
     assert captured.out == ""
-
-
-def test_version_checking(mocker: MockerFixture):
-    mock = mocker.patch("bittensor.utils.version.check_version")
-
-    version.version_checking()
-
-    mock.assert_called_once()
-
-
-def test_version_checking_exception(mocker: MockerFixture):
-    mock = mocker.patch(
-        "bittensor.utils.version.check_version", side_effect=version.VersionCheckError
-    )
-
-    version.version_checking()
-
-    mock.assert_called_once()

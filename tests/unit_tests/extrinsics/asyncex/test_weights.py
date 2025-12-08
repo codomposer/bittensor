@@ -1,486 +1,291 @@
 import pytest
-from bittensor.core import async_subtensor
-from bittensor.core.extrinsics.asyncex import weights as async_weights
+
+from bittensor.core.extrinsics.asyncex import weights as weights_module
+from bittensor.core.settings import version_as_int
+from bittensor.core.types import ExtrinsicResponse
 
 
 @pytest.mark.asyncio
-async def test_do_set_weights_success(subtensor, fake_wallet, mocker):
-    """Tests _do_set_weights when weights are set successfully."""
+async def test_commit_weights_extrinsic(mocker, subtensor, fake_wallet):
+    """Test successful `commit_weights_extrinsic` extrinsic."""
     # Preps
-    fake_uids = [1, 2, 3]
-    fake_vals = [100, 200, 300]
-    fake_netuid = 0
+    fake_wallet.hotkey.ss58_address = "hotkey"
 
-    fake_call = mocker.AsyncMock()
-    fake_extrinsic = mocker.AsyncMock()
-    fake_response = mocker.Mock()
+    netuid = mocker.Mock()
+    mechid = mocker.Mock()
+    uids = []
+    weights = []
+    salt = []
 
-    async def fake_is_success():
-        return True
-
-    fake_response.is_success = fake_is_success()
-
-    fake_response.process_events = mocker.AsyncMock()
-
-    mocker.patch.object(subtensor.substrate, "compose_call", fake_call)
-    mocker.patch.object(subtensor.substrate, "create_signed_extrinsic", fake_extrinsic)
-    mocker.patch.object(
-        subtensor.substrate,
-        "submit_extrinsic",
-        mocker.AsyncMock(return_value=fake_response),
+    mocked_get_mechanism_storage_index = mocker.patch.object(
+        weights_module, "get_mechid_storage_index"
+    )
+    mocked_generate_weight_hash = mocker.patch.object(
+        weights_module, "generate_weight_hash"
+    )
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
+    mocked_sign_and_send_extrinsic = mocker.patch.object(
+        subtensor, "sign_and_send_extrinsic", return_value=ExtrinsicResponse(True, "")
     )
 
     # Call
-    result, message = await async_weights._do_set_weights(
+    result = await weights_module.commit_weights_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        uids=fake_uids,
-        vals=fake_vals,
-        netuid=fake_netuid,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
+        netuid=netuid,
+        mechid=mechid,
+        uids=uids,
+        weights=weights,
+        salt=salt,
     )
 
     # Asserts
-    assert result is True
-    assert message == "Successfully set weights."
-
-
-@pytest.mark.asyncio
-async def test_do_set_weights_failure(subtensor, fake_wallet, mocker):
-    """Tests _do_set_weights when setting weights fails."""
-    # Preps
-    fake_uids = [1, 2, 3]
-    fake_vals = [100, 200, 300]
-    fake_netuid = 0
-
-    fake_call = mocker.AsyncMock()
-    fake_extrinsic = mocker.AsyncMock()
-
-    async def fake_is_success():
-        return False
-
-    fake_response = mocker.Mock()
-    fake_response.is_success = fake_is_success()
-
-    fake_response.process_events = mocker.AsyncMock()
-
-    fake_response.error_message = mocker.AsyncMock(return_value="Error occurred")()
-    fake_response.process_events = mocker.AsyncMock()
-
-    mocked_format_error_message = mocker.Mock()
-    mocker.patch.object(
-        async_subtensor, "format_error_message", mocked_format_error_message
+    mocked_get_mechanism_storage_index.assert_called_once_with(
+        netuid=netuid, mechid=mechid
     )
-
-    mocker.patch.object(subtensor.substrate, "compose_call", return_value=fake_call)
-    mocker.patch.object(
-        subtensor.substrate, "create_signed_extrinsic", return_value=fake_extrinsic
+    mocked_generate_weight_hash.assert_called_once_with(
+        address=fake_wallet.hotkey.ss58_address,
+        netuid=mocked_get_mechanism_storage_index.return_value,
+        uids=list(uids),
+        values=list(weights),
+        salt=salt,
+        version_key=weights_module.version_as_int,
     )
-    mocker.patch.object(
-        subtensor.substrate, "submit_extrinsic", return_value=fake_response
+    mocked_compose_call.assert_awaited_once_with(
+        call_module="SubtensorModule",
+        call_function="commit_mechanism_weights",
+        call_params={
+            "netuid": netuid,
+            "mecid": mechid,
+            "commit_hash": mocked_generate_weight_hash.return_value,
+        },
     )
-
-    # Call
-    result, message = await async_weights._do_set_weights(
-        subtensor=subtensor,
+    mocked_sign_and_send_extrinsic.assert_awaited_once_with(
         wallet=fake_wallet,
-        uids=fake_uids,
-        vals=fake_vals,
-        netuid=fake_netuid,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    assert result is False
-    mocked_format_error_message.assert_called_once_with("Error occurred")
-    assert message == mocked_format_error_message.return_value
-
-
-@pytest.mark.asyncio
-async def test_do_set_weights_no_waiting(subtensor, fake_wallet, mocker):
-    """Tests _do_set_weights when not waiting for inclusion or finalization."""
-    # Preps
-    fake_uids = [1, 2, 3]
-    fake_vals = [100, 200, 300]
-    fake_netuid = 0
-
-    fake_call = mocker.AsyncMock()
-    fake_extrinsic = mocker.AsyncMock()
-    fake_response = mocker.Mock()
-
-    mocker.patch.object(subtensor.substrate, "compose_call", fake_call)
-    mocker.patch.object(subtensor.substrate, "create_signed_extrinsic", fake_extrinsic)
-    mocker.patch.object(
-        subtensor.substrate,
-        "submit_extrinsic",
-        mocker.AsyncMock(return_value=fake_response),
-    )
-
-    # Call
-    result, message = await async_weights._do_set_weights(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        uids=fake_uids,
-        vals=fake_vals,
-        netuid=fake_netuid,
-        wait_for_inclusion=False,
-        wait_for_finalization=False,
-    )
-
-    # Asserts
-    assert result is True
-    assert message == "Not waiting for finalization or inclusion."
-
-
-@pytest.mark.asyncio
-async def test_set_weights_extrinsic_success_with_finalization(
-    subtensor, fake_wallet, mocker
-):
-    """Tests set_weights_extrinsic when weights are successfully set with finalization."""
-    # Preps
-    fake_netuid = 1
-    fake_uids = mocker.Mock()
-    fake_weights = mocker.Mock()
-
-    mocked_do_set_weights = mocker.patch.object(
-        async_weights, "_do_set_weights", return_value=(True, "")
-    )
-    mocker_converter = mocker.patch.object(
-        async_weights, "convert_and_normalize_weights_and_uids"
-    )
-    mocker_converter.return_value = (mocker.Mock(), mocker.Mock())
-
-    # Call
-    result, message = await async_weights.set_weights_extrinsic(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuid=fake_netuid,
-        uids=fake_uids,
-        weights=fake_weights,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    mocker_converter.assert_called_once_with(fake_uids, fake_weights)
-
-    mocked_do_set_weights.assert_called_once_with(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuid=fake_netuid,
-        uids=mocker_converter.return_value[0],
-        vals=mocker_converter.return_value[1],
-        version_key=0,
-        wait_for_finalization=True,
-        wait_for_inclusion=True,
-        period=8,
-    )
-    assert result is True
-    assert message == "Successfully set weights and Finalized."
-
-
-@pytest.mark.asyncio
-async def test_set_weights_extrinsic_no_waiting(subtensor, fake_wallet, mocker):
-    """Tests set_weights_extrinsic when no waiting for inclusion or finalization."""
-    # Preps
-    fake_netuid = 1
-    fake_uids = [1, 2, 3]
-    fake_weights = [0.1, 0.2, 0.7]
-
-    mocked_do_set_weights = mocker.patch.object(
-        async_weights,
-        "_do_set_weights",
-        return_value=(True, "Not waiting for finalization or inclusion."),
-    )
-
-    # Call
-    result, message = await async_weights.set_weights_extrinsic(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuid=fake_netuid,
-        uids=fake_uids,
-        weights=fake_weights,
-        wait_for_inclusion=False,
-        wait_for_finalization=False,
-    )
-
-    # Asserts
-    mocked_do_set_weights.assert_called_once()
-    assert result is True
-    assert message == "Not waiting for finalization or inclusion."
-
-
-@pytest.mark.asyncio
-async def test_set_weights_extrinsic_failure(subtensor, fake_wallet, mocker):
-    """Tests set_weights_extrinsic when setting weights fails."""
-    # Preps
-    fake_netuid = 1
-    fake_uids = [1, 2, 3]
-    fake_weights = [0.1, 0.2, 0.7]
-
-    mocked_do_set_weights = mocker.patch.object(
-        async_weights, "_do_set_weights", return_value=(False, "Test error message")
-    )
-
-    # Call
-    result, message = await async_weights.set_weights_extrinsic(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuid=fake_netuid,
-        uids=fake_uids,
-        weights=fake_weights,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    mocked_do_set_weights.assert_called_once()
-    assert result is False
-    assert message == "Test error message"
-
-
-@pytest.mark.asyncio
-async def test_set_weights_extrinsic_exception(subtensor, fake_wallet, mocker):
-    """Tests set_weights_extrinsic when an exception is raised."""
-    # Preps
-    fake_netuid = 1
-    fake_uids = [1, 2, 3]
-    fake_weights = [0.1, 0.2, 0.7]
-
-    mocked_do_set_weights = mocker.patch.object(
-        async_weights, "_do_set_weights", side_effect=Exception("Unexpected error")
-    )
-
-    # Call
-    result, message = await async_weights.set_weights_extrinsic(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuid=fake_netuid,
-        uids=fake_uids,
-        weights=fake_weights,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    mocked_do_set_weights.assert_called_once()
-    assert result is False
-    assert message == "Unexpected error"
-
-
-@pytest.mark.asyncio
-async def test_do_commit_weights_success(subtensor, fake_wallet, mocker):
-    """Tests _do_commit_weights when the commit is successful."""
-    # Preps
-    fake_netuid = 1
-    fake_commit_hash = "test_hash"
-
-    fake_call = mocker.AsyncMock()
-    fake_extrinsic = mocker.AsyncMock()
-    fake_response = mocker.Mock()
-
-    async def fake_is_success():
-        return True
-
-    fake_response.is_success = fake_is_success()
-    fake_response.process_events = mocker.AsyncMock()
-
-    mocker.patch.object(subtensor.substrate, "compose_call", return_value=fake_call)
-    mocker.patch.object(
-        subtensor.substrate, "create_signed_extrinsic", return_value=fake_extrinsic
-    )
-    mocker.patch.object(
-        subtensor.substrate, "submit_extrinsic", return_value=fake_response
-    )
-
-    # Call
-    result, message = await async_weights._do_commit_weights(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuid=fake_netuid,
-        commit_hash=fake_commit_hash,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    assert result is True
-    assert message == ""
-
-
-@pytest.mark.asyncio
-async def test_do_commit_weights_failure(subtensor, fake_wallet, mocker):
-    """Tests _do_commit_weights when the commit fails."""
-    # Preps
-    fake_netuid = 1
-    fake_commit_hash = "test_hash"
-
-    fake_call = mocker.AsyncMock()
-    fake_extrinsic = mocker.AsyncMock()
-
-    async def fake_is_success():
-        return False
-
-    fake_response = mocker.Mock()
-    fake_response.is_success = fake_is_success()
-    fake_response.process_events = mocker.AsyncMock()
-    fake_response.error_message = mocker.AsyncMock(return_value="Error occurred")()
-
-    mocked_format_error_message = mocker.Mock(return_value="Formatted error")
-    mocker.patch.object(
-        async_subtensor, "format_error_message", mocked_format_error_message
-    )
-
-    mocker.patch.object(subtensor.substrate, "compose_call", return_value=fake_call)
-    mocker.patch.object(
-        subtensor.substrate, "create_signed_extrinsic", return_value=fake_extrinsic
-    )
-    mocker.patch.object(
-        subtensor.substrate, "submit_extrinsic", return_value=fake_response
-    )
-
-    # Call
-    result, message = await async_weights._do_commit_weights(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuid=fake_netuid,
-        commit_hash=fake_commit_hash,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    assert result is False
-    mocked_format_error_message.assert_called_once_with("Error occurred")
-    assert message == "Formatted error"
-
-
-@pytest.mark.asyncio
-async def test_do_commit_weights_no_waiting(subtensor, fake_wallet, mocker):
-    """Tests _do_commit_weights when not waiting for inclusion or finalization."""
-    # Preps
-    fake_netuid = 1
-    fake_commit_hash = "test_hash"
-
-    fake_call = mocker.AsyncMock()
-    fake_extrinsic = mocker.AsyncMock()
-    fake_response = mocker.Mock()
-
-    mocker.patch.object(subtensor.substrate, "compose_call", return_value=fake_call)
-    mocker.patch.object(
-        subtensor.substrate, "create_signed_extrinsic", return_value=fake_extrinsic
-    )
-    mocker.patch.object(
-        subtensor.substrate, "submit_extrinsic", return_value=fake_response
-    )
-
-    # Call
-    result, message = await async_weights._do_commit_weights(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuid=fake_netuid,
-        commit_hash=fake_commit_hash,
-        wait_for_inclusion=False,
-        wait_for_finalization=False,
-    )
-
-    # Asserts
-    assert result is True
-    assert message == "Not waiting for finalization or inclusion."
-
-
-@pytest.mark.asyncio
-async def test_do_commit_weights_exception(subtensor, fake_wallet, mocker):
-    """Tests _do_commit_weights when an exception is raised."""
-    # Preps
-    fake_netuid = 1
-    fake_commit_hash = "test_hash"
-
-    mocker.patch.object(
-        subtensor.substrate,
-        "compose_call",
-        side_effect=Exception("Unexpected exception"),
-    )
-
-    # Call
-    with pytest.raises(Exception, match="Unexpected exception"):
-        await async_weights._do_commit_weights(
-            subtensor=subtensor,
-            wallet=fake_wallet,
-            netuid=fake_netuid,
-            commit_hash=fake_commit_hash,
-            wait_for_inclusion=True,
-            wait_for_finalization=True,
-        )
-
-
-@pytest.mark.asyncio
-async def test_commit_weights_extrinsic_success(subtensor, fake_wallet, mocker):
-    """Tests commit_weights_extrinsic when the commit is successful."""
-    # Preps
-    fake_netuid = 1
-    fake_commit_hash = "test_hash"
-
-    mocked_do_commit_weights = mocker.patch.object(
-        async_weights, "_do_commit_weights", return_value=(True, None)
-    )
-
-    # Call
-    result, message = await async_weights.commit_weights_extrinsic(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuid=fake_netuid,
-        commit_hash=fake_commit_hash,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
-    )
-
-    # Asserts
-    mocked_do_commit_weights.assert_called_once_with(
-        subtensor=subtensor,
-        wallet=fake_wallet,
-        netuid=fake_netuid,
-        commit_hash=fake_commit_hash,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
+        call=mocked_compose_call.return_value,
+        nonce_key="hotkey",
+        sign_with="hotkey",
+        use_nonce=True,
         period=None,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
     )
-    assert result is True
-    assert message == "✅ [green]Successfully committed weights.[green]"
+    assert result == mocked_sign_and_send_extrinsic.return_value
 
 
 @pytest.mark.asyncio
-async def test_commit_weights_extrinsic_failure(subtensor, fake_wallet, mocker):
-    """Tests commit_weights_extrinsic when the commit fails."""
+async def test_commit_timelocked_weights_extrinsic(mocker, subtensor, fake_wallet):
+    """Test successful `commit_timelocked_weights_extrinsic` extrinsic."""
     # Preps
-    fake_netuid = 1
-    fake_commit_hash = "test_hash"
+    fake_wallet.hotkey.ss58_address = "hotkey"
 
-    mocked_do_commit_weights = mocker.patch.object(
-        async_weights, "_do_commit_weights", return_value=(False, "Commit failed.")
+    netuid = mocker.Mock()
+    mechid = mocker.Mock()
+    uids = []
+    weights = []
+    block_time = mocker.Mock()
+
+    mocked_convert_and_normalize_weights_and_uids = mocker.patch.object(
+        weights_module,
+        "convert_and_normalize_weights_and_uids",
+        return_value=(uids, weights),
+    )
+    mocked_get_current_block = mocker.patch.object(subtensor, "get_current_block")
+    mocked_get_subnet_hyperparameters = mocker.patch.object(
+        subtensor, "get_subnet_hyperparameters"
+    )
+    mocked_get_mechanism_storage_index = mocker.patch.object(
+        weights_module, "get_mechid_storage_index"
+    )
+    mocked_get_encrypted_commit = mocker.patch.object(
+        weights_module,
+        "get_encrypted_commit",
+        return_value=(mocker.Mock(), mocker.Mock()),
+    )
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
+    mocked_sign_and_send_extrinsic = mocker.patch.object(
+        subtensor,
+        "sign_and_send_extrinsic",
+        return_value=ExtrinsicResponse(
+            True,
+            f"reveal_round:{mocked_get_encrypted_commit.return_value[1]}",
+        ),
     )
 
     # Call
-    result, message = await async_weights.commit_weights_extrinsic(
+    result = await weights_module.commit_timelocked_weights_extrinsic(
         subtensor=subtensor,
         wallet=fake_wallet,
-        netuid=fake_netuid,
-        commit_hash=fake_commit_hash,
-        wait_for_inclusion=True,
-        wait_for_finalization=True,
+        netuid=netuid,
+        mechid=mechid,
+        uids=uids,
+        weights=weights,
+        block_time=block_time,
     )
 
     # Asserts
-    mocked_do_commit_weights.assert_called_once_with(
-        subtensor=subtensor,
+    mocked_convert_and_normalize_weights_and_uids.assert_called_once_with(uids, weights)
+    mocked_get_mechanism_storage_index.assert_called_once_with(
+        netuid=netuid, mechid=mechid
+    )
+    mocked_get_encrypted_commit.assert_called_once_with(
+        uids=uids,
+        weights=weights,
+        subnet_reveal_period_epochs=mocked_get_subnet_hyperparameters.return_value.commit_reveal_period,
+        version_key=weights_module.version_as_int,
+        tempo=mocked_get_subnet_hyperparameters.return_value.tempo,
+        netuid=mocked_get_mechanism_storage_index.return_value,
+        current_block=mocked_get_current_block.return_value,
+        block_time=block_time,
+        hotkey=fake_wallet.hotkey.public_key,
+    )
+    mocked_compose_call.assert_awaited_once_with(
+        call_module="SubtensorModule",
+        call_function="commit_timelocked_mechanism_weights",
+        call_params={
+            "netuid": netuid,
+            "mecid": mechid,
+            "commit": mocked_get_encrypted_commit.return_value[0],
+            "reveal_round": mocked_get_encrypted_commit.return_value[1],
+            "commit_reveal_version": 4,
+        },
+    )
+    mocked_sign_and_send_extrinsic.assert_awaited_once_with(
         wallet=fake_wallet,
-        netuid=fake_netuid,
-        commit_hash=fake_commit_hash,
+        call=mocked_compose_call.return_value,
+        nonce_key="hotkey",
+        sign_with="hotkey",
+        use_nonce=True,
+        period=None,
+        raise_error=False,
         wait_for_inclusion=True,
         wait_for_finalization=True,
-        period=None,
     )
-    assert result is False
-    assert message == "Commit failed."
+    assert result == mocked_sign_and_send_extrinsic.return_value
+
+
+@pytest.mark.asyncio
+async def test_reveal_weights_extrinsic(mocker, subtensor, fake_wallet):
+    """Test successful `reveal_weights_extrinsic` extrinsic."""
+    # Preps
+    fake_wallet.hotkey.ss58_address = "hotkey"
+
+    netuid = mocker.Mock()
+    mechid = mocker.Mock()
+    uids = []
+    weights = []
+    salt = []
+
+    mocked_convert_and_normalize_weights_and_uids = mocker.patch.object(
+        weights_module,
+        "convert_and_normalize_weights_and_uids",
+        return_value=(uids, weights),
+    )
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
+    mocked_sign_and_send_extrinsic = mocker.patch.object(
+        subtensor, "sign_and_send_extrinsic", return_value=ExtrinsicResponse(True, "")
+    )
+
+    # Call
+    result = await weights_module.reveal_weights_extrinsic(
+        subtensor=subtensor,
+        wallet=fake_wallet,
+        netuid=netuid,
+        mechid=mechid,
+        uids=uids,
+        weights=weights,
+        salt=salt,
+        version_key=weights_module.version_as_int,
+    )
+
+    # Asserts
+    mocked_convert_and_normalize_weights_and_uids.assert_called_once_with(uids, weights)
+    mocked_compose_call.assert_awaited_once_with(
+        call_module="SubtensorModule",
+        call_function="reveal_mechanism_weights",
+        call_params={
+            "netuid": netuid,
+            "mecid": mechid,
+            "uids": mocked_convert_and_normalize_weights_and_uids.return_value[0],
+            "values": mocked_convert_and_normalize_weights_and_uids.return_value[0],
+            "salt": salt,
+            "version_key": weights_module.version_as_int,
+        },
+    )
+    mocked_sign_and_send_extrinsic.assert_awaited_once_with(
+        wallet=fake_wallet,
+        call=mocked_compose_call.return_value,
+        nonce_key="hotkey",
+        sign_with="hotkey",
+        use_nonce=True,
+        period=None,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+    )
+    assert result == mocked_sign_and_send_extrinsic.return_value
+
+
+@pytest.mark.asyncio
+async def test_set_weights_extrinsic(mocker, subtensor, fake_wallet):
+    """Verify that the `set_weights_extrinsic` function works as expected."""
+    # Preps
+    fake_wallet.hotkey.ss58_address = "hotkey"
+
+    netuid = mocker.Mock()
+    mechid = mocker.Mock()
+    uids = []
+    weights = []
+
+    mocked_convert_and_normalize_weights_and_uids = mocker.patch.object(
+        weights_module,
+        "convert_and_normalize_weights_and_uids",
+        return_value=(uids, weights),
+    )
+    mocked_compose_call = mocker.patch.object(subtensor, "compose_call")
+    mocked_sign_and_send_extrinsic = mocker.patch.object(
+        subtensor,
+        "sign_and_send_extrinsic",
+        return_value=ExtrinsicResponse(
+            True,
+            "",
+        ),
+    )
+
+    # Call
+    result = await weights_module.set_weights_extrinsic(
+        subtensor=subtensor,
+        wallet=fake_wallet,
+        netuid=netuid,
+        mechid=mechid,
+        uids=uids,
+        weights=weights,
+        version_key=weights_module.version_as_int,
+    )
+
+    # Asserts
+    mocked_convert_and_normalize_weights_and_uids.assert_called_once_with(uids, weights)
+    mocked_compose_call.assert_awaited_once_with(
+        call_module="SubtensorModule",
+        call_function="set_mechanism_weights",
+        call_params={
+            "netuid": netuid,
+            "mecid": mechid,
+            "dests": uids,
+            "weights": weights,
+            "version_key": weights_module.version_as_int,
+        },
+    )
+    mocked_sign_and_send_extrinsic.assert_awaited_once_with(
+        wallet=fake_wallet,
+        call=mocked_compose_call.return_value,
+        nonce_key="hotkey",
+        sign_with="hotkey",
+        use_nonce=True,
+        period=None,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+    )
+    assert result == mocked_sign_and_send_extrinsic.return_value
